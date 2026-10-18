@@ -1,0 +1,14 @@
+{
+ "version":8,"name":"Flight Map · Night",
+ "sources":{
+   "earth":{"type":"geojson","data":"asset://data/land.geojson"},
+   "openmaptiles":{"type":"vector","url":"https://tiles.openfreemap.org/planet","attribution":"© OpenStreetMap contributors · OpenFreeMap · OpenMapTiles"}
+ },
+ "layers":[
+   {"id":"ocean","type":"background","paint":{"background-color":"#0B1C2B"}},
+   {"id":"earth","type":"fill","source":"earth","paint":{"fill-color":"#203749","fill-outline-color":"#304B5D"}},
+   {"id":"water","type":"fill","source":"openmaptiles","source-layer":"water","paint":{"fill-color":"#0B1C2B"}},
+   {"id":"boundary","type":"line","source":"openmaptiles","source-layer":"boundary","filter":["==","admin_level",2],"paint":{"line-color":"#587181","line-width":0.6,"line-opacity":0.7}},
+   {"id":"waterway","type":"line","source":"openmaptiles","source-layer":"waterway","minzoom":4,"paint":{"line-color":"#23485C","line-width":0.7}}
+ ]
+}
