@@ -33,6 +33,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             runCatching {
                 repository.loadData()
                 pack = repository.readPack()?.let { it.copy(mapReady = it.mapReady && maps.verify(it.mapRegionIds)) }
+                maps.discardUnreferenced(pack?.mapRegionIds.orEmpty())
                 if (pack != null) syncPack()
                 loaded = true
             }.onFailure { error = "Could not load bundled data: ${it.message}" }

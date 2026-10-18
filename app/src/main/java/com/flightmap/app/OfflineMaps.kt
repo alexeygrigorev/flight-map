@@ -116,4 +116,12 @@ class OfflineMaps(context: Context) {
             }
         })
     }
+    fun discardUnreferenced(keep: List<Long>) {
+        manager.listOfflineRegions(object : OfflineManager.ListOfflineRegionsCallback {
+            override fun onError(error: String) = Unit
+            override fun onList(offlineRegions: Array<OfflineRegion>?) {
+                discard(offlineRegions.orEmpty().map { it.id }.filter { it !in keep })
+            }
+        })
+    }
 }

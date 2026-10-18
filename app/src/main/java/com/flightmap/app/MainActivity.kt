@@ -9,6 +9,8 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -198,9 +200,9 @@ private fun FlightScreen(vm: FlightViewModel) {
             IconButton(onClick = { vm.edit() }) { Icon(Icons.Outlined.Tune, "Edit flight", tint = Muted, modifier = Modifier.size(21.dp)) }
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            Column { Text(plan.origin.iata, fontSize = 44.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-1).sp); Text(plan.origin.name.substringBefore(" Airport").take(22), color = Muted, fontSize = 12.sp) }
+            Column { Text(plan.origin.iata, fontSize = 44.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-1).sp); Text(plan.origin.name.substringBefore(" International").substringBefore(" Airport").take(20), color = Muted, fontSize = 12.sp) }
             Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Outlined.East, null, tint = Mint, modifier = Modifier.size(30.dp)); Text(plan.number, color = Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp)) }
-            Column(horizontalAlignment = Alignment.End) { Text(plan.destination.iata, fontSize = 44.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-1).sp); Text(plan.destination.name.substringBefore(" Airport").take(22), color = Muted, fontSize = 12.sp) }
+            Column(horizontalAlignment = Alignment.End) { Text(plan.destination.iata, fontSize = 44.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-1).sp); Text(plan.destination.name.substringBefore(" International").substringBefore(" Airport").take(20), color = Muted, fontSize = 12.sp) }
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             RouteMap(pack, progress, Modifier.fillMaxSize())
@@ -250,10 +252,12 @@ private fun FlightScreen(vm: FlightViewModel) {
         }
     }
     if (citiesOpen) ModalBottomSheet(onDismissRequest = { citiesOpen = false }, containerColor = Ink) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 32.dp)) {
-            Text("Along the route", fontSize = 27.sp, fontWeight = FontWeight.Medium)
-            Text("${pack.cities.size} cities · within 180 km of the great circle\nTimes and forecasts for ${if(vm.previewFraction != null) "preview time" else "current time"}", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 12.dp))
-            pack.cities.forEach { city ->
+        LazyColumn(Modifier.fillMaxWidth().padding(horizontal = 24.dp), contentPadding = PaddingValues(bottom = 32.dp)) {
+            item {
+                Text("Along the route", fontSize = 27.sp, fontWeight = FontWeight.Medium)
+                Text("${pack.cities.size} cities · within 180 km of the great circle\nTimes and forecasts for ${if(vm.previewFraction != null) "preview time" else "current time"}", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 12.dp))
+            }
+            items(pack.cities, key = { it.id }) { city ->
                 val forecast = WeatherParser.nearest(pack.weather[city.id].orEmpty(), time)
                 Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) { Text(city.name, fontSize = 16.sp); Text("${city.country} · ${city.timezone}", color = Muted, fontSize = 11.sp) }
