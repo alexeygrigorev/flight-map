@@ -1,0 +1,8 @@
+# Flight Map design reference
+
+Generated with Codex imagegen before UI implementation on 2026-10-18.
+
+- `flight-map-design.png`: preparation and in-flight reference screens.
+- `app-icon.png`: generated launcher art, resized for Android density buckets.
+
+Implementation contract: navy #0B1420, mint #8DE0C6, off-white type; Material 3 controls; generous spacing; readable route, remaining distance, scheduled arrival, nearby city and local time. Always show ESTIMATED, distinguish preview, and show partial downloads honestly. Map is a flat vector view rather than the mockup's terrain rendering. A bundled outline remains available without network.
