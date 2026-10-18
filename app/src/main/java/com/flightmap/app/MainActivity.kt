@@ -1,9 +1,14 @@
 package com.flightmap.app
 
 import android.os.Bundle
+import android.os.Build
+import android.Manifest
+import android.content.pm.PackageManager
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
@@ -26,10 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.flightmap.core.*
-import okhttp3.Dispatcher
-import okhttp3.OkHttpClient
 import org.maplibre.android.MapLibre
-import org.maplibre.android.module.http.HttpRequestUtil
 import java.time.*
 import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
@@ -41,16 +43,13 @@ val Muted = Color(0xFFA6B9C8)
 val Cream = Color(0xFFF2F3EE)
 val Amber = Color(0xFFFFCE8B)
 private val colors = darkColorScheme(primary = Mint, onPrimary = Ink, background = Ink, onBackground = Cream,
-    surface = Panel, onSurface = Cream, onSurfaceVariant = Muted, outline = Color(0xFF344857))
+    surface = Panel, onSurface = Cream, onSurfaceVariant = Muted, outline = Color(0xFF344857),
+    secondaryContainer = Panel, onSecondaryContainer = Mint)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         MapLibre.getInstance(this)
-        val dispatcher = Dispatcher().apply { maxRequests = 4; maxRequestsPerHost = 4 }
-        HttpRequestUtil.setOkHttpClient(OkHttpClient.Builder().dispatcher(dispatcher).addInterceptor { chain ->
-            chain.proceed(chain.request().newBuilder().header("User-Agent", "FlightMapAndroid/0.1 (offline corridor companion)").build())
-        }.build())
         enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT), navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContent {
@@ -75,22 +74,34 @@ private fun StatusPill(text: String, ready: Boolean = true) {
 
 @Composable
 private fun PrepareScreen(vm: FlightViewModel) {
+    val exampleDate = remember { LocalDate.now(ZoneId.of("Europe/Helsinki")).plusDays(1).toString() }
     var flight by rememberSaveableState("AY87")
-    var date by rememberSaveableState("2026-10-18")
+    var date by rememberSaveableState(exampleDate)
     var origin by rememberSaveableState("HEL")
     var destination by rememberSaveableState("PVG")
-    var departure by rememberSaveableState("2026-10-18T01:10")
-    var arrival by rememberSaveableState("2026-10-18T18:25")
+    var departure by rememberSaveableState("${exampleDate}T01:10")
+    var arrival by rememberSaveableState("${exampleDate}T18:25")
     var lookupInfo by remember { mutableStateOf("AY87 example schedule · confirm your ticket before preparing.") }
     var about by remember { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf<FlightPack?>(null) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val notifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     val saved = vm.pack
+    fun fillFrom(plan: FlightPlan) {
+        flight = plan.number; origin = plan.origin.iata; destination = plan.destination.iata
+        departure = plan.departure.atZone(ZoneId.of(plan.origin.timezone)).toLocalDateTime().toString()
+        arrival = plan.arrival.atZone(ZoneId.of(plan.destination.timezone)).toLocalDateTime().toString()
+        date = departure.take(10)
+    }
+    val mapEstimate = remember(origin, destination, vm.loaded) {
+        val from = vm.repository.airports.firstOrNull { it.iata == origin }
+        val to = vm.repository.airports.firstOrNull { it.iata == destination }
+        if (from != null && to != null && from.iata != to.iata) runCatching {
+            OfflinePlan.summary(FlightPlan("estimate", from, to, Instant.EPOCH, Instant.EPOCH.plusSeconds(3600)))
+        }.getOrNull() else null
+    }
     LaunchedEffect(saved?.plan) {
-        saved?.plan?.let {
-            flight = it.number; origin = it.origin.iata; destination = it.destination.iata
-            departure = it.departure.atZone(ZoneId.of(it.origin.timezone)).toLocalDateTime().toString()
-            arrival = it.arrival.atZone(ZoneId.of(it.destination.timezone)).toLocalDateTime().toString()
-            date = departure.take(10)
-        }
+        saved?.plan?.let { fillFrom(it) }
     }
     Column(Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp)) {
         Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 22.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -100,6 +111,24 @@ private fun PrepareScreen(vm: FlightViewModel) {
         }
         Text("Prepare for flight", fontSize = 32.sp, lineHeight = 38.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-1).sp)
         Text("A window seat, wherever you sit.", color = Muted, fontSize = 15.sp, modifier = Modifier.padding(top = 6.dp, bottom = 24.dp))
+        if (vm.packs.isNotEmpty()) {
+            Eyebrow("Saved flights · ${vm.packs.size}", Mint)
+            Spacer(Modifier.height(10.dp))
+            vm.packs.forEach { flightPack ->
+                Surface(color = Panel, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                    Row(Modifier.padding(start = 14.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f).clickable(enabled = !vm.busy) { vm.selectPack(flightPack); fillFrom(flightPack.plan) }) {
+                            Text("${flightPack.plan.origin.iata} → ${flightPack.plan.destination.iata} · ${flightPack.plan.number}", color = if (flightPack == saved) Mint else Cream, fontSize = 16.sp)
+                            Text(flightPack.plan.departure.atZone(ZoneId.of(flightPack.plan.origin.timezone)).format(DateTimeFormatter.ofPattern("d MMM yyyy · HH:mm")), color = Muted, fontSize = 12.sp)
+                            Text(if (flightPack.mapReady) "Offline map saved" else "Partial pack", color = Muted, fontSize = 11.sp)
+                        }
+                        TextButton(onClick = { vm.selectPack(flightPack); vm.fly() }, enabled = !vm.busy) { Text("Open") }
+                        IconButton(onClick = { deleting = flightPack }, enabled = !vm.busy) { Icon(Icons.Outlined.Delete, "Delete ${flightPack.plan.number}", tint = Muted) }
+                    }
+                }
+            }
+            Text("Select a flight to edit its ticket times, or enter a new flight below.", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(bottom = 20.dp))
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedTextField(flight, { flight = it.uppercase() }, label = { Text("Flight number") }, singleLine = true, enabled = !vm.busy, modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp))
             OutlinedTextField(date, { date = it }, label = { Text("Departure date") }, singleLine = true, enabled = !vm.busy, modifier = Modifier.weight(1.2f), shape = RoundedCornerShape(14.dp))
@@ -122,28 +151,40 @@ private fun PrepareScreen(vm: FlightViewModel) {
         OutlinedTextField(departure, { departure = it }, label = { Text("Departure · airport local time") }, supportingText = { Text("YYYY-MM-DDTHH:MM · ${vm.repository.airports.firstOrNull { it.iata == origin }?.timezone ?: "airport time zone"}") }, singleLine = true, enabled = !vm.busy, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp))
         OutlinedTextField(arrival, { arrival = it }, label = { Text("Arrival · airport local time") }, supportingText = { Text("Include arrival date · ${vm.repository.airports.firstOrNull { it.iata == destination }?.timezone ?: "airport time zone"}") }, singleLine = true, enabled = !vm.busy, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp))
         Spacer(Modifier.height(22.dp))
-        Eyebrow(if (saved != null && !vm.busy) "Saved flight · ${saved.plan.number} ${saved.plan.origin.iata} → ${saved.plan.destination.iata}" else "Download for offline use")
+        Eyebrow(vm.preparationPlan?.takeIf { vm.busy || vm.pendingPreparation }?.let { "Preparing · ${it.number} ${it.origin.iata} → ${it.destination.iata}" }
+            ?: saved?.let { "Saved flight · ${it.plan.number} ${it.plan.origin.iata} → ${it.plan.destination.iata}" } ?: "Download for offline use")
         Spacer(Modifier.height(12.dp))
         DownloadRow("Route and schedule", "Great-circle path · estimated position", vm.routeReady, vm.busy && !vm.routeReady)
         DownloadRow("Cities and time zones", saved?.let { "${it.cities.size} cities within 180 km of the route" } ?: "Bundled GeoNames city database", vm.citiesReady, vm.busy && vm.routeReady && !vm.citiesReady)
         DownloadRow("Hourly weather", vm.weatherDetail.ifBlank { "Open-Meteo · download before departure" }, vm.weatherReady, vm.busy && vm.citiesReady && !vm.weatherReady && vm.stage.contains("forecast"))
-        DownloadRow("Offline vector map", vm.mapDetail.ifBlank { "Route corridor · zoom 0–5 · up to 50 MB" }, vm.mapReady, vm.busy && vm.stage.contains("vector"))
+        DownloadRow("Offline vector map", vm.mapDetail.ifBlank { "Detailed route band + airport close-ups · up to 49 MB / 2,900 tiles" }, vm.mapReady, vm.busy && vm.stage.contains("vector"))
+        Text("Download budget per pack: up to 49 MB of map resources plus saved forecasts. Detail is concentrated along the route and near airports. Downloads continue when you leave the app.", color = Muted, fontSize = 11.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 10.dp))
+        mapEstimate?.let { estimate ->
+            Text("Planned coverage: ~${estimate.estimatedTiles} tiles. " + estimate.layers.joinToString(" · ") { "${it.id} z${it.minZoom.toInt()}–${it.maxZoom.toInt()}" }, color = Mint, fontSize = 11.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 6.dp))
+        }
         if (vm.stage.isNotBlank()) Text(vm.stage, Modifier.padding(top = 12.dp), color = if(vm.mapReady && vm.weatherReady) Mint else Muted, fontSize = 13.sp)
         vm.error?.let { Text(it, color = Amber, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 12.dp)) }
         Spacer(Modifier.height(20.dp))
-        Button(onClick = { vm.prepare(flight, origin, destination, departure, arrival) }, enabled = vm.loaded && !vm.busy, modifier = Modifier.fillMaxWidth().height(58.dp), shape = RoundedCornerShape(18.dp)) {
+        Button(onClick = {
+            if (Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+            vm.prepare(flight, origin, destination, departure, arrival)
+        }, enabled = vm.loaded && !vm.busy, modifier = Modifier.fillMaxWidth().height(58.dp), shape = RoundedCornerShape(18.dp)) {
             Icon(Icons.Outlined.Download, null, Modifier.size(21.dp)); Spacer(Modifier.width(10.dp)); Text(if(vm.busy) "Preparing your flight…" else "Prepare for flight", fontSize = 16.sp)
         }
-        if (vm.busy) TextButton(onClick = { vm.cancel() }, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Cancel download") }
+        if (vm.busy) TextButton(onClick = { vm.cancel() }, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Pause download") }
+        if (vm.pendingPreparation && !vm.busy) OutlinedButton(onClick = { vm.resume() }, modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) { Text("Resume preparation") }
         if (saved != null && !vm.busy) {
             Spacer(Modifier.height(12.dp))
             OutlinedButton(onClick = { vm.fly() }, modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(18.dp)) {
                 Icon(Icons.Outlined.FlightTakeoff, null, Modifier.size(20.dp)); Spacer(Modifier.width(10.dp))
-                Text(if (vm.mapReady && vm.weatherReady) "Open offline flight" else "Open saved flight · limited data")
+                Text(if (saved.mapReady && saved.forecastsReady) "Open offline flight" else "Open saved flight · limited data")
             }
             Text("Saved ${saved.preparedAt.atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("d MMM, HH:mm"))} · works after closing the app", color = Muted, fontSize = 11.sp, modifier = Modifier.padding(top = 10.dp))
         }
         Text("Position follows scheduled block time along a great circle. Actual flight paths, delays and winds can differ substantially.", color = Muted, fontSize = 11.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 18.dp, bottom = 28.dp))
+    }
+    deleting?.let { flightPack ->
+        AlertDialog(onDismissRequest = { deleting = null }, title = { Text("Delete saved flight?") }, text = { Text("${flightPack.plan.number} · ${flightPack.plan.origin.iata} → ${flightPack.plan.destination.iata}\nIts offline map and forecasts will be removed from this device.") }, confirmButton = { TextButton(onClick = { vm.deletePack(flightPack); deleting = null }) { Text("Delete") } }, dismissButton = { TextButton(onClick = { deleting = null }) { Text("Keep flight") } })
     }
     if (about) AlertDialog(onDismissRequest = { about = false }, title = { Text("Made for the window seat") }, text = { Text("Flight Map estimates a journey from your ticket times. It does not track an aircraft or request GPS.\n\nData: OurAirports (public domain), GeoNames (CC BY 4.0), Natural Earth (public domain), Open-Meteo (CC BY 4.0). Vector tiles: © OpenStreetMap contributors · OpenFreeMap · OpenMapTiles.\n\nPreparation sends corridor city coordinates to Open-Meteo and map tile requests to OpenFreeMap. In-flight mode disables map networking and reads saved forecasts only. No account or API keys.", fontSize = 13.sp) }, confirmButton = { TextButton(onClick = { about = false }) { Text("Close") } })
 }
@@ -188,8 +229,13 @@ private fun FlightScreen(vm: FlightViewModel) {
     val progress = FlightTiming.progress(plan, time)
     val nearest = pack.cities.minByOrNull { GreatCircle.distanceKm(it.point, progress.point) }
     val nearestDistance = nearest?.let { GreatCircle.distanceKm(it.point, progress.point) }
-    val weather = nearest?.let { WeatherParser.nearest(pack.weather[it.id].orEmpty(), time) }
+    val weatherLocation = nearest?.takeIf { it.id in pack.weather } ?: pack.cities
+        .filter { it.id in pack.weather }
+        .minByOrNull { GreatCircle.distanceKm(it.point, progress.point) }
+        ?.takeIf { GreatCircle.distanceKm(it.point, progress.point) <= 80 }
+    val weather = weatherLocation?.let { WeatherParser.nearest(pack.weather[it.id].orEmpty(), time) }
     var citiesOpen by remember { mutableStateOf(false) }
+    var citySearch by remember { mutableStateOf("") }
     var previewOpen by remember { mutableStateOf(false) }
     BackHandler { vm.edit() }
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
@@ -205,7 +251,7 @@ private fun FlightScreen(vm: FlightViewModel) {
             Column(horizontalAlignment = Alignment.End) { Text(plan.destination.iata, fontSize = 44.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-1).sp); Text(plan.destination.name.substringBefore(" International").substringBefore(" Airport").take(20), color = Muted, fontSize = 12.sp) }
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            RouteMap(pack, progress, Modifier.fillMaxSize())
+            key(pack.plan) { RouteMap(pack, progress, Modifier.fillMaxSize()) }
             Surface(color = Ink.copy(alpha = .8f), shape = RoundedCornerShape(50), modifier = Modifier.align(Alignment.TopStart).padding(start = 22.dp, top = 12.dp)) {
                 Text(if (progress.fraction >= 1.0) "Scheduled arrival reached" else if(time < plan.departure) "Before scheduled departure" else "Great-circle estimate", color = Muted, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp))
             }
@@ -233,12 +279,14 @@ private fun FlightScreen(vm: FlightViewModel) {
                     Column(horizontalAlignment = Alignment.End) {
                         Text(weather?.let { "${it.temperature.roundToInt()}°" } ?: "—", fontSize = 30.sp, color = Cream)
                         Text(weather?.let { weatherText(it.code) } ?: "No saved forecast", color = Muted, fontSize = 11.sp)
+                        if (weather != null && weatherLocation?.id != nearest?.id) Text("near ${weatherLocation?.name}", color = Muted, fontSize = 10.sp)
                     }
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    StatusPill(if(pack.mapReady && pack.cities.all { !pack.weather[it.id].isNullOrEmpty() } && pack.cities.isNotEmpty()) "OFFLINE READY" else "PARTIAL OFFLINE", pack.mapReady && pack.weather.isNotEmpty())
+                    StatusPill(if(pack.mapReady && pack.isWeatherReady()) "OFFLINE READY" else "PARTIAL OFFLINE", pack.mapReady && pack.isWeatherReady())
                     TextButton(onClick = { citiesOpen = true }) { Text("Along the route", fontSize = 12.sp); Icon(Icons.Outlined.ChevronRight, null, Modifier.size(18.dp)) }
                 }
+                Text("Forecast saved ${pack.preparedAt.atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("d MMM HH:mm"))} · estimated position", color = Muted, fontSize = 10.sp)
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = { previewOpen = !previewOpen; if(!previewOpen) vm.previewFraction = null }) { Text(if(previewOpen) "Close preview" else "Preview journey", fontSize = 11.sp, color = Muted) }
                     Spacer(Modifier.weight(1f))
@@ -256,8 +304,9 @@ private fun FlightScreen(vm: FlightViewModel) {
             item {
                 Text("Along the route", fontSize = 27.sp, fontWeight = FontWeight.Medium)
                 Text("${pack.cities.size} cities · within 180 km of the great circle\nTimes and forecasts for ${if(vm.previewFraction != null) "preview time" else "current time"}", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 12.dp))
+                OutlinedTextField(citySearch, { citySearch = it }, label = { Text("Find a city or country") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp))
             }
-            items(pack.cities, key = { it.id }) { city ->
+            items(pack.cities.filter { citySearch.isBlank() || it.name.contains(citySearch, true) || it.country.contains(citySearch, true) }, key = { it.id }) { city ->
                 val forecast = WeatherParser.nearest(pack.weather[city.id].orEmpty(), time)
                 Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) { Text(city.name, fontSize = 16.sp); Text("${city.country} · ${city.timezone}", color = Muted, fontSize = 11.sp) }

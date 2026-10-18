@@ -5,7 +5,13 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
 import androidx.compose.runtime.*
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
@@ -31,7 +37,7 @@ fun RouteMap(pack: FlightPack, progress: FlightProgress, modifier: Modifier = Mo
     var styleReady by remember { mutableStateOf(false) }
     val view = remember { MapView(context, MapLibreMapOptions.createFromAttributes(context)
         .textureMode(true).compassEnabled(false).logoEnabled(false).attributionEnabled(false)
-        .minZoomPreference(1.0).maxZoomPreference(5.0).tiltGesturesEnabled(false)
+        .minZoomPreference(1.0).maxZoomPreference(10.0).tiltGesturesEnabled(false)
         .foregroundLoadColor(android.graphics.Color.rgb(11, 28, 43))) }
     DisposableEffect(owner, view) {
         view.onCreate(null)
@@ -52,14 +58,20 @@ fun RouteMap(pack: FlightPack, progress: FlightProgress, modifier: Modifier = Mo
                 style.addSource(GeoJsonSource("ends", FeatureCollection.fromFeatures(listOf(
                     Feature.fromGeometry(pack.plan.origin.point.mapPoint()), Feature.fromGeometry(pack.plan.destination.point.mapPoint())))))
                 style.addLayer(CircleLayer("ends", "ends").withProperties(circleColor("#8DE0C6"), circleRadius(5f), circleStrokeColor("#0B1420"), circleStrokeWidth(2f)))
-                val selected = (pack.cities.sortedByDescending { it.population }.take(9) + listOf(
+                val overview = PlaceLabels.overview(pack.plan, pack.cities)
+                val detail = pack.cities.sortedByDescending { it.population }
+                    .distinctBy { kotlin.math.floor(it.point.lat * 2) to kotlin.math.floor(it.point.lon * 2) }
+                    .filter { city -> overview.none { it.id == city.id } }.take(450)
+                val selected = (overview + listOf(
                     City("origin", pack.plan.origin.iata, "", pack.plan.origin.point, "UTC", 0),
-                    City("destination", pack.plan.destination.iata, "", pack.plan.destination.point, "UTC", 0)))
+                    City("destination", pack.plan.destination.iata, "", pack.plan.destination.point, "UTC", 0)) + detail)
                 selected.forEachIndexed { index, city ->
                     val bitmap = labelBitmap(city.name)
                     style.addImage("city-$index", bitmap)
                     style.addSource(GeoJsonSource("city-$index", city.point.mapPoint()))
-                    style.addLayer(SymbolLayer("city-$index", "city-$index").withProperties(iconImage("city-$index"), iconSize(0.6f), iconAnchor(Property.ICON_ANCHOR_TOP), iconOffset(arrayOf(0f, 12f))))
+                    style.addLayer(SymbolLayer("city-$index", "city-$index").apply {
+                        minZoom = if (index < overview.size + 2) 0f else 5.5f
+                    }.withProperties(iconImage("city-$index"), iconSize(0.6f), iconAnchor(Property.ICON_ANCHOR_TOP), iconOffset(arrayOf(0f, 12f))))
                 }
                 style.addImage("plane", planeBitmap())
                 style.addSource(GeoJsonSource("plane", progress.point.mapPoint()))
@@ -87,7 +99,22 @@ fun RouteMap(pack: FlightPack, progress: FlightProgress, modifier: Modifier = Mo
             style.getLayerAs<SymbolLayer>("plane")?.setProperties(iconRotate(progress.heading.toFloat()))
         }
     }
-    AndroidView(factory = { view }, modifier = modifier)
+    Box(modifier) {
+        AndroidView(factory = { view }, modifier = Modifier.fillMaxSize())
+        Column(Modifier.align(Alignment.CenterEnd).padding(8.dp)) {
+            FilledTonalButton(onClick = { map?.animateCamera(CameraUpdateFactory.zoomIn()) }, contentPadding = PaddingValues(0.dp), modifier = Modifier.size(44.dp).semantics { contentDescription = "Zoom in" }) { Text("+", style = MaterialTheme.typography.titleLarge) }
+            Spacer(Modifier.height(6.dp))
+            FilledTonalButton(onClick = { map?.animateCamera(CameraUpdateFactory.zoomOut()) }, contentPadding = PaddingValues(0.dp), modifier = Modifier.size(44.dp).semantics { contentDescription = "Zoom out" }) { Text("−", style = MaterialTheme.typography.titleLarge) }
+            Spacer(Modifier.height(6.dp))
+            FilledTonalButton(onClick = { map?.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(progress.point.lat.coerceIn(-84.0, 84.0), progress.point.lon), 7.0)) }, contentPadding = PaddingValues(4.dp), modifier = Modifier.width(66.dp)) { Text("Plane") }
+            FilledTonalButton(onClick = {
+                val points = GreatCircle.route(pack.plan.origin.point, pack.plan.destination.point).map { LatLng(it.lat.coerceIn(-84.0, 84.0), it.lon) }
+                if (points.maxOf { it.longitude } - points.minOf { it.longitude } < 180)
+                    map?.animateCamera(CameraUpdateFactory.newLatLngBounds(LatLngBounds.Builder().includes(points).build(), 45))
+                else map?.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(progress.point.lat.coerceIn(-84.0, 84.0), progress.point.lon), 2.0))
+            }, contentPadding = PaddingValues(4.dp), modifier = Modifier.width(66.dp)) { Text("Route") }
+        }
+    }
 }
 
 private fun labelBitmap(text: String): Bitmap {

@@ -81,7 +81,8 @@ assert pack['plan']['origin']['iata'] == 'HEL'
 assert pack['plan']['destination']['iata'] == 'PVG'
 assert pack['mapReady'], 'Map corridor did not download'
 assert pack['cities'], 'No corridor cities'
-assert len(pack['weather']) == len(pack['cities']), 'Missing city forecasts'
+expected = pack.get('sampledWeatherIds') or [c['id'] for c in pack['cities']]
+assert all(pack['weather'].get(city_id) for city_id in expected), 'Missing selected city forecasts'
 assert pack['mapRegionIds'], 'No offline region saved'
 summary = {'flight': pack['plan'], 'cityCount': len(pack['cities']), 'weatherCityCount': len(pack['weather']),
            'weatherHourCount': sum(len(v) for v in pack['weather'].values()), 'mapRegionIds': pack['mapRegionIds'],
@@ -95,7 +96,7 @@ adb('shell', 'am', 'force-stop', 'com.flightmap.app')
 adb('shell', 'am', 'start', '-n', 'com.flightmap.app/.MainActivity')
 time.sleep(4)
 for _ in range(5):
-    if tap('Open offline flight'):
+    if tap('Open') or tap('Open offline flight'):
         break
     scroll()
 else:

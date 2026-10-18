@@ -9,12 +9,12 @@ This script downloads and processes:
    - Alternate: https://ourairports.com/data/airports.csv
    - Output: app/src/main/assets/data/airports.json
    - Filter: type in ('large_airport', 'medium_airport') and non-empty iata_code.
-   - Timezone assignment: Nearest city in cities15000 (country-matched first,
+   - Timezone assignment: Nearest city in cities5000 (country-matched first,
      falling back to global nearest, then UTC fallback).
 
-2. GeoNames cities15000
+2. GeoNames cities5000
    - Source: GeoNames (Creative Commons Attribution 4.0 - CC BY 4.0)
-   - URL: https://download.geonames.org/export/dump/cities15000.zip
+   - URL: https://download.geonames.org/export/dump/cities5000.zip
    - Output: app/src/main/assets/data/cities.json
    - Format: [{id, name, country, lat, lon, timezone, population}, ...]
 
@@ -42,7 +42,7 @@ from pathlib import Path
 
 # Sources
 URL_OURAIRPORTS = "https://davidmegginson.github.io/ourairports-data/airports.csv"
-URL_GEONAMES_CITIES15000 = "https://download.geonames.org/export/dump/cities15000.zip"
+URL_GEONAMES_CITIES5000 = "https://download.geonames.org/export/dump/cities5000.zip"
 URL_NATURAL_EARTH_110M_LAND = "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_land.geojson"
 
 USER_AGENT = "FlightMap-DataUpdater/1.0 (+https://github.com/alexey/flight-map)"
@@ -120,12 +120,12 @@ def nearest_neighbor(node, target, best=None, best_dist=float("inf")):
 
 def parse_cities(zip_bytes: bytes):
     """
-    Parse GeoNames cities15000.txt from zip archive.
+    Parse GeoNames cities5000.txt from zip archive.
     Returns list of city dicts and spatial indexes.
     """
-    print("Processing GeoNames cities15000...")
+    print("Processing GeoNames cities5000...")
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-        with zf.open("cities15000.txt") as f:
+        with zf.open("cities5000.txt") as f:
             cities = []
             for line in f:
                 parts = line.decode("utf-8").strip().split("\t")
@@ -373,8 +373,8 @@ def main():
             cache_file.write_bytes(data)
         return data
 
-    # 1. GeoNames cities15000
-    cities_zip = get_data(URL_GEONAMES_CITIES15000, "cities15000.zip")
+    # 1. GeoNames cities5000
+    cities_zip = get_data(URL_GEONAMES_CITIES5000, "cities5000.zip")
     cities, country_trees, global_tree = parse_cities(cities_zip)
     save_compact_json(cities, args.output_dir / "cities.json")
 

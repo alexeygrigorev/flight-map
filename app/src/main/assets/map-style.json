@@ -1,14 +1,146 @@
 {
- "version":8,"name":"Flight Map · Night",
- "sources":{
-   "earth":{"type":"geojson","data":"asset://data/land.geojson"},
-   "openmaptiles":{"type":"vector","url":"https://tiles.openfreemap.org/planet","attribution":"© OpenStreetMap contributors · OpenFreeMap · OpenMapTiles"}
- },
- "layers":[
-   {"id":"ocean","type":"background","paint":{"background-color":"#0B1C2B"}},
-   {"id":"earth","type":"fill","source":"earth","paint":{"fill-color":"#203749","fill-outline-color":"#304B5D"}},
-   {"id":"water","type":"fill","source":"openmaptiles","source-layer":"water","paint":{"fill-color":"#0B1C2B"}},
-   {"id":"boundary","type":"line","source":"openmaptiles","source-layer":"boundary","filter":["==","admin_level",2],"paint":{"line-color":"#587181","line-width":0.6,"line-opacity":0.7}},
-   {"id":"waterway","type":"line","source":"openmaptiles","source-layer":"waterway","minzoom":4,"paint":{"line-color":"#23485C","line-width":0.7}}
- ]
+  "version": 8,
+  "name": "Flight Map \u00b7 Night",
+  "sources": {
+    "earth": {
+      "type": "geojson",
+      "data": "asset://data/land.geojson"
+    },
+    "openmaptiles": {
+      "type": "vector",
+      "url": "https://tiles.openfreemap.org/planet",
+      "attribution": "\u00a9 OpenStreetMap contributors \u00b7 OpenFreeMap \u00b7 OpenMapTiles"
+    }
+  },
+  "layers": [
+    {
+      "id": "ocean",
+      "type": "background",
+      "paint": {
+        "background-color": "#0B1C2B"
+      }
+    },
+    {
+      "id": "earth",
+      "type": "fill",
+      "source": "earth",
+      "paint": {
+        "fill-color": "#203749",
+        "fill-outline-color": "#304B5D"
+      }
+    },
+    {
+      "id": "landcover",
+      "type": "fill",
+      "source": "openmaptiles",
+      "source-layer": "landcover",
+      "minzoom": 5,
+      "paint": {
+        "fill-color": "#254333",
+        "fill-opacity": 0.4
+      }
+    },
+    {
+      "id": "landuse",
+      "type": "fill",
+      "source": "openmaptiles",
+      "source-layer": "landuse",
+      "minzoom": 6,
+      "paint": {
+        "fill-color": "#38434b",
+        "fill-opacity": 0.6
+      }
+    },
+    {
+      "id": "water",
+      "type": "fill",
+      "source": "openmaptiles",
+      "source-layer": "water",
+      "paint": {
+        "fill-color": "#0B1C2B"
+      }
+    },
+    {
+      "id": "boundary",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "boundary",
+      "filter": [
+        "==",
+        "admin_level",
+        2
+      ],
+      "paint": {
+        "line-color": "#587181",
+        "line-width": 0.6,
+        "line-opacity": 0.7
+      }
+    },
+    {
+      "id": "waterway",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "waterway",
+      "minzoom": 4,
+      "paint": {
+        "line-color": "#23485C",
+        "line-width": 0.7
+      }
+    },
+    {
+      "id": "lakes-detail",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "water",
+      "minzoom": 6,
+      "paint": {
+        "line-color": "#34576b",
+        "line-width": 0.6
+      }
+    },
+    {
+      "id": "roads",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "transportation",
+      "minzoom": 6,
+      "filter": [
+        "in",
+        "class",
+        "motorway",
+        "trunk",
+        "primary",
+        "secondary",
+        "tertiary"
+      ],
+      "paint": {
+        "line-color": "#9a947b",
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          6,
+          0.4,
+          10,
+          1.5
+        ],
+        "line-opacity": 0.75
+      }
+    },
+    {
+      "id": "airport-runways",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "aeroway",
+      "minzoom": 8,
+      "paint": {
+        "line-color": "#b8c9d1",
+        "line-width": 2
+      }
+    }
+  ]
 }
