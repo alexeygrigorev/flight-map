@@ -100,3 +100,11 @@ data class RouteTimezoneBand(
     val isDaylight: Boolean
 )
 
+data class CountryBoundary(
+    val name: String,
+    val iso: String,
+    val labelPoint: GeoPoint,
+    val population: Long,
+    val rings: List<List<GeoPoint>> = emptyList()
+)
+

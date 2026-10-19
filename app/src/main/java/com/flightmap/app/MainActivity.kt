@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -25,7 +26,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -34,6 +37,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.flightmap.core.*
 import org.maplibre.android.MapLibre
@@ -568,17 +574,29 @@ private fun FlightScreen(vm: FlightViewModel) {
         if (rawPack.plan.waypoints == plan.waypoints) rawPack else rawPack.copy(plan = plan)
     }
 
-    // AC #1: Primary landscape (horizontal) in-flight mode like airline IFE
+    // Immersive fullscreen landscape IFE mode (hides Android status & navigation bars)
     val context = LocalContext.current
+    val view = LocalView.current
     DisposableEffect(Unit) {
         val activity = context as? ComponentActivity
         val previousOrientation = activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        val window = activity?.window
+        val insetsController = if (window != null) {
+            WindowCompat.getInsetsController(window, view)
+        } else null
+        insetsController?.let { controller ->
+            controller.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+        }
         onDispose {
+            insetsController?.show(WindowInsetsCompat.Type.systemBars())
             activity?.requestedOrientation = previousOrientation
         }
     }
 
+    val cameraState = rememberGlobeCameraState(plan)
     val time = vm.effectiveNow()
     val progress = FlightTiming.progress(plan, time)
     val nearest = remember(pack.cities, progress.point) {
@@ -587,15 +605,11 @@ private fun FlightScreen(vm: FlightViewModel) {
             .minByOrNull { GreatCircle.distanceKm(it.point, progress.point) }
             ?: pack.cities.minByOrNull { GreatCircle.distanceKm(it.point, progress.point) }
     }
-    val nearestDistance = nearest?.let { GreatCircle.distanceKm(it.point, progress.point) }
     val weatherLocation = nearest?.takeIf { it.id in pack.weather } ?: pack.cities
         .filter { it.id in pack.weather }
         .minByOrNull { GreatCircle.distanceKm(it.point, progress.point) }
     val weather = weatherLocation?.let { WeatherParser.nearest(pack.weather[it.id].orEmpty(), time) }
         ?: SolarCalculator.estimateSurfaceWeather(progress.point, time)
-    val solarLabel = remember(progress.point, time.epochSecond / 60) {
-        SolarCalculator.dayNightLabel(progress.point, time)
-    }
     val solarIsDay = remember(progress.point, time.epochSecond / 60) {
         SolarCalculator.isDaylight(progress.point, time)
     }
@@ -625,21 +639,25 @@ private fun FlightScreen(vm: FlightViewModel) {
 
     BackHandler { vm.edit() }
 
-    val originCityName = remember(plan.origin) { IFE_AIRPORT_CITY_NAMES[plan.origin.iata] ?: plan.origin.name.substringBefore(" ") }
-    val destCityName = remember(plan.destination) { IFE_AIRPORT_CITY_NAMES[plan.destination.iata] ?: plan.destination.name.substringBefore(" ") }
+    val originCityName = remember(plan.origin) {
+        IFE_AIRPORT_CITY_NAMES[plan.origin.iata] ?: plan.origin.name.substringBefore(" ")
+    }
+    val destCityName = remember(plan.destination) {
+        IFE_AIRPORT_CITY_NAMES[plan.destination.iata] ?: plan.destination.name.substringBefore(" ")
+    }
 
     Box(Modifier.fillMaxSize().background(Ink)) {
-        // AC #2: Full-bleed 3D Satellite Earth IFE Globe with curved horizon, peaks, cities, countries, landmarks, solar terminator
+        // 1. Fullscreen 3D Satellite Earth IFE Globe
         IfeGlobeView(
             pack = pack,
             progress = progress,
             countries = vm.repository.countries,
             allCities = vm.repository.allCities,
-            onOpenCitiesSheet = { citiesOpen = true },
+            cameraState = cameraState,
             modifier = Modifier.fillMaxSize()
         )
 
-        // Top Airline IFE Header Bar (matching flight-map-ref-ife.jpg without overlapping elements)
+        // 2. Slim, Quiet Top Route Progress Header in dark space above the curved horizon
         Row(
             Modifier
                 .fillMaxWidth()
@@ -647,68 +665,37 @@ private fun FlightScreen(vm: FlightViewModel) {
                 .background(
                     Brush.verticalGradient(
                         listOf(
-                            Color(0xEE040812),
-                            Color(0xAA060B18),
+                            Color(0xCC040812),
+                            Color(0x66060B18),
                             Color.Transparent
                         )
                     )
                 )
-                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+                .padding(horizontal = 18.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // Left: Circular indigo back button + flight code badge
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            Surface(
+                onClick = { vm.edit() },
+                color = Color(0x9916203A),
+                shape = CircleShape,
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.20f)),
+                modifier = Modifier.size(32.dp)
             ) {
-                Surface(
-                    onClick = { vm.edit() },
-                    color = IfeIndigo.copy(alpha = 0.92f),
-                    shape = CircleShape,
-                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.24f)),
-                    modifier = Modifier.size(36.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            Icons.Outlined.ArrowBack,
-                            contentDescription = "Edit flight",
-                            tint = Color.White,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-                Column {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Text(
-                            "${plan.origin.iata} → ${plan.destination.iata}",
-                            color = Color.White,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            plan.number,
-                            color = Mint,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-                    Text(
-                        if (plan.isRealTrajectory) "FILED ATS CORRIDOR" else "GREAT-CIRCLE ESTIMATE",
-                        color = if (plan.isRealTrajectory) Mint else Amber,
-                        fontSize = 8.sp,
-                        letterSpacing = 0.7.sp,
-                        fontWeight = FontWeight.SemiBold
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.AutoMirrored.Outlined.ArrowBack,
+                        contentDescription = "Edit flight",
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp)
                     )
                 }
             }
 
-            // Center: Helsinki ——✈————○ Shanghai + Tail Wind & Telemetry subtitle (exact match to ref photo)
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(horizontal = 8.dp),
+                    .padding(horizontal = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Row(
@@ -721,350 +708,97 @@ private fun FlightScreen(vm: FlightViewModel) {
                     Text(
                         originCityName,
                         color = Color.White,
-                        fontSize = 14.sp,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold
                     )
-                    // IFE Flight Progress Track with Plane Icon & Destination Ring
                     IfeHeaderProgressBar(
                         fraction = progress.fraction.toFloat(),
                         modifier = Modifier
                             .weight(1f)
-                            .height(20.dp)
+                            .height(18.dp)
                     )
                     Text(
                         destCityName,
                         color = Color.White,
-                        fontSize = 14.sp,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold
                     )
                 }
                 Text(
-                    "$tailWindText  ·  %,d km remaining  ·  %02dh %02dm left  ·  ETA %s".format(
+                    "${plan.number}  ·  ${tailWindText.substringBefore(" |")}  ·  %,d km left  ·  %dh %02dm  ·  ETA %s".format(
                         progress.remainingKm.roundToInt(),
                         progress.remaining.toHours(),
                         progress.remaining.toMinutes() % 60,
-                        plan.arrival.atZone(ZoneId.of(plan.destination.timezone)).format(DateTimeFormatter.ofPattern("HH:mm"))
+                        plan.arrival.atZone(ZoneId.of(plan.destination.timezone))
+                            .format(DateTimeFormatter.ofPattern("HH:mm"))
                     ),
-                    color = Color(0xFFD6E0EE),
-                    fontSize = 10.sp,
+                    color = Color(0xFFBAC8DC),
+                    fontSize = 9.5.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
 
-            // Right: Status pill + Play/Preview button (matching ref photo top-right play button)
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            Surface(
+                onClick = {
+                    previewOpen = !previewOpen
+                    if (!previewOpen) isPlaying = false
+                },
+                color = if (previewOpen) IfeIndigoBright else Color(0x9916203A),
+                shape = CircleShape,
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.20f)),
+                modifier = Modifier.size(32.dp)
             ) {
-                StatusPill("OFFLINE READY", true)
-                Surface(
-                    onClick = {
-                        previewOpen = !previewOpen
-                    },
-                    color = IfeIndigo.copy(alpha = 0.92f),
-                    shape = CircleShape,
-                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.24f)),
-                    modifier = Modifier.size(36.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                            contentDescription = "Preview journey",
-                            tint = Color.White,
-                            modifier = Modifier.size(19.dp)
-                        )
-                    }
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                        contentDescription = "Preview journey",
+                        tint = Color.White,
+                        modifier = Modifier.size(17.dp)
+                    )
                 }
             }
         }
 
-        // Bottom Translucent Airline IFE Telemetry & Offline Info Strip
-        Surface(
-            color = Color(0xDD081020),
-            shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
-            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+        // 3. Discreet Floating Bottom Panel (unobtrusive glass dock housing telemetry, preview, feature info & controls)
+        DiscreetIfePanel(
+            pack = pack,
+            progress = progress,
+            time = time,
+            nearest = nearest,
+            weather = weather,
+            solarIsDay = solarIsDay,
+            cameraState = cameraState,
+            previewOpen = previewOpen,
+            isPlaying = isPlaying,
+            previewFraction = vm.previewFraction,
+            onTogglePreview = {
+                previewOpen = !previewOpen
+                if (!previewOpen) isPlaying = false
+            },
+            onTogglePlay = {
+                if (vm.previewFraction != null && vm.previewFraction!! >= 1.0f) {
+                    vm.previewFraction = 0f
+                }
+                isPlaying = !isPlaying
+            },
+            onScrub = { value ->
+                isPlaying = false
+                vm.previewFraction = value
+            },
+            onResetTime = {
+                isPlaying = false
+                vm.previewFraction = null
+            },
+            onOpenCities = { citiesOpen = true },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-        ) {
-            Column(
-                Modifier
-                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
-                    .padding(horizontal = 16.dp, vertical = 7.dp)
-            ) {
-                // Primary telemetry row: [Where the plane is now + Overflown city & fact] | [Time zones under route] | [Weather & Controls]
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    // 1. Aircraft Position, Day/Night, Overflown City & Cultural/Geo Fact
-                    Column(Modifier.weight(1.3f)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            val latHem = if (progress.point.lat >= 0) "N" else "S"
-                            val lonHem = if (progress.point.lon >= 0) "E" else "W"
-                            Text(
-                                "NOW %.1f°%s, %.1f°%s".format(abs(progress.point.lat), latHem, abs(progress.point.lon), lonHem),
-                                color = Mint,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                letterSpacing = 0.6.sp
-                            )
-                            Text(
-                                solarLabel,
-                                color = if (solarIsDay) PeakYellow else Color(0xFF9FB8FF),
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                "${progress.flownKm.roundToInt()} km flown · ${progress.heading.roundToInt()}° hdg",
-                                color = Muted,
-                                fontSize = 10.sp
-                            )
-                        }
-                        val relativeDir = nearest?.let {
-                            GreatCircle.relativeBearingDescription(progress.point, progress.heading, it.point)
-                        }.orEmpty()
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.padding(top = 2.dp)
-                        ) {
-                            Text(
-                                nearest?.name ?: "Open skies",
-                                color = Color.White,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1
-                            )
-                            if (nearest != null && nearestDistance != null) {
-                                val localClock = time.atZone(ZoneId.of(nearest.timezone))
-                                    .format(DateTimeFormatter.ofPattern("HH:mm"))
-                                Text(
-                                    "${nearest.country} · ${nearestDistance.roundToInt()} km (${relativeDir.substringBefore(" ·")}) · Local $localClock",
-                                    color = Muted,
-                                    fontSize = 10.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                        if (nearest != null) {
-                            Text(
-                                IfeCatalog.cityFact(nearest),
-                                color = Color(0xFFD0DCEB),
-                                fontSize = 10.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-
-                    // 2. Time Zones Under the Route + Day/Night per zone
-                    Column(Modifier.weight(1.35f)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                "TIME ZONES UNDER ROUTE · ${plan.effectiveRouteLabel.uppercase()}",
-                                color = Muted,
-                                fontSize = 9.sp,
-                                letterSpacing = 0.7.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        Spacer(Modifier.height(4.dp))
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            items(timeZones) { tz ->
-                                Surface(
-                                    color = if (tz.isCurrent) IfeIndigoBright else Color(0xFF121D33),
-                                    shape = RoundedCornerShape(8.dp),
-                                    border = BorderStroke(
-                                        1.dp,
-                                        if (tz.isCurrent) Mint else Color.White.copy(alpha = 0.12f)
-                                    )
-                                ) {
-                                    Row(
-                                        Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
-                                    ) {
-                                        Text(
-                                            if (tz.isDaylight) "☀" else "☾",
-                                            color = if (tz.isDaylight) PeakYellow else Color(0xFF9FB8FF),
-                                            fontSize = 10.sp
-                                        )
-                                        Column {
-                                            Text(
-                                                "${tz.utcOffsetLabel} · ${tz.localTimeLabel}",
-                                                color = if (tz.isCurrent) Mint else Color.White,
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                            Text(
-                                                tz.representativeCity,
-                                                color = Muted,
-                                                fontSize = 8.sp,
-                                                maxLines = 1
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // 3. Weather + Preview & Along the route buttons
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Column(horizontalAlignment = Alignment.End) {
-                            Text(
-                                "${weather.temperature.roundToInt()}°C",
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Cream
-                            )
-                            Text(
-                                WeatherParser.conditionText(weather.code),
-                                color = Muted,
-                                fontSize = 10.sp,
-                                maxLines = 1
-                            )
-                        }
-                        Column(
-                            horizontalAlignment = Alignment.End,
-                            verticalArrangement = Arrangement.spacedBy(2.dp)
-                        ) {
-                            Surface(
-                                onClick = {
-                                    previewOpen = !previewOpen
-                                    if (!previewOpen) isPlaying = false
-                                },
-                                color = if (previewOpen) IfeIndigoBright else Color(0xFF162238),
-                                shape = RoundedCornerShape(8.dp),
-                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f))
-                            ) {
-                                Text(
-                                    if (previewOpen) "Close preview" else "Preview journey",
-                                    color = if (previewOpen) Mint else Cream,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                                )
-                            }
-                            Surface(
-                                onClick = { citiesOpen = true },
-                                color = Color(0xFF162238),
-                                shape = RoundedCornerShape(8.dp),
-                                border = BorderStroke(1.dp, Mint.copy(alpha = 0.35f))
-                            ) {
-                                Row(
-                                    Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        "Along the route (${pack.cities.size})",
-                                        color = Mint,
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Icon(Icons.Outlined.ChevronRight, null, tint = Mint, modifier = Modifier.size(14.dp))
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Scrubber bar when Preview journey is open
-                if (previewOpen) {
-                    Spacer(Modifier.height(6.dp))
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Text(
-                            "Preview · ${
-                                time.atZone(ZoneId.of(plan.origin.timezone))
-                                    .format(DateTimeFormatter.ofPattern("d MMM HH:mm"))
-                            } (${(progress.fraction * 100).roundToInt()}%)",
-                            color = Amber,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        TextButton(
-                            onClick = {
-                                if (vm.previewFraction != null && vm.previewFraction!! >= 1.0f) {
-                                    vm.previewFraction = 0f
-                                }
-                                isPlaying = !isPlaying
-                            },
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                            modifier = Modifier.height(26.dp)
-                        ) {
-                            Text(if (isPlaying) "⏸ Pause" else "▶ Play", fontSize = 11.sp, color = Mint)
-                        }
-                        if (vm.previewFraction != null) {
-                            TextButton(
-                                onClick = {
-                                    isPlaying = false
-                                    vm.previewFraction = null
-                                },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                                modifier = Modifier.height(26.dp)
-                            ) {
-                                Text("Use current time", fontSize = 10.sp, color = Muted)
-                            }
-                        }
-                        // Native Android SeekBar for both smooth scrubbing and UIAutomator compatibility
-                        val sliderValue = ((vm.previewFraction ?: progress.fraction.toFloat()) * 1000f)
-                            .roundToInt()
-                            .coerceIn(0, 1000)
-                        AndroidView(
-                            factory = { ctx ->
-                                SeekBar(ctx).apply {
-                                    max = 1000
-                                    contentDescription = "Preview journey scrubber"
-                                    setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                                        override fun onProgressChanged(seekBar: SeekBar?, value: Int, fromUser: Boolean) {
-                                            if (fromUser) {
-                                                isPlaying = false
-                                                vm.previewFraction = (value / 1000f).coerceIn(0f, 1f)
-                                            }
-                                        }
-                                        override fun onStartTrackingTouch(seekBar: SeekBar?) {
-                                            isPlaying = false
-                                        }
-                                        override fun onStopTrackingTouch(seekBar: SeekBar?) {}
-                                    })
-                                }
-                            },
-                            update = { seekBar ->
-                                if (seekBar.progress != sliderValue) {
-                                    seekBar.progress = sliderValue
-                                }
-                            },
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(26.dp)
-                        )
-                    }
-                }
-            }
-        }
+                .padding(horizontal = 20.dp, vertical = 10.dp)
+                .widthIn(max = 860.dp)
+        )
     }
 
-    // AC #4 & #6: Preloaded Offline Cities, Facts, Time Zones & Weather Modal Sheet
+    // Offline Cities, Facts, Time Zones & Weather Modal Sheet
     if (citiesOpen) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         val orderedSheetCities = remember(pack.cities, plan, citySearch) {
@@ -1110,7 +844,48 @@ private fun FlightScreen(vm: FlightViewModel) {
                         }
                         StatusPill("OFFLINE READY", true)
                     }
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(10.dp))
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(bottom = 10.dp)
+                    ) {
+                        items(timeZones) { tz ->
+                            Surface(
+                                color = if (tz.isCurrent) IfeIndigoBright else Panel,
+                                shape = RoundedCornerShape(10.dp),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (tz.isCurrent) Mint else Color.White.copy(alpha = 0.12f)
+                                )
+                            ) {
+                                Row(
+                                    Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        if (tz.isDaylight) "☀" else "☾",
+                                        color = if (tz.isDaylight) PeakYellow else Color(0xFF9FB8FF),
+                                        fontSize = 11.sp
+                                    )
+                                    Column {
+                                        Text(
+                                            "${tz.utcOffsetLabel} · ${tz.localTimeLabel}",
+                                            color = if (tz.isCurrent) Mint else Color.White,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            tz.representativeCity,
+                                            color = Muted,
+                                            fontSize = 9.sp,
+                                            maxLines = 1
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                     OutlinedTextField(
                         citySearch,
                         { citySearch = it },
@@ -1191,6 +966,422 @@ private fun FlightScreen(vm: FlightViewModel) {
                 }
             }
         }
+    }
+}
+
+/**
+ * Single discreet, low-profile translucent bottom panel that unifies:
+ * - Current overflown place, local clock, day/night & weather
+ * - Optional inline journey preview scrubber (when toggled open)
+ * - Optional tapped globe feature summary (city, peak, or landmark pin)
+ * - Compact camera & route drawer controls
+ */
+@Composable
+private fun DiscreetIfePanel(
+    pack: FlightPack,
+    progress: FlightProgress,
+    time: Instant,
+    nearest: City?,
+    weather: WeatherHour,
+    solarIsDay: Boolean,
+    cameraState: GlobeCameraState,
+    previewOpen: Boolean,
+    isPlaying: Boolean,
+    previewFraction: Float?,
+    onTogglePreview: () -> Unit,
+    onTogglePlay: () -> Unit,
+    onScrub: (Float) -> Unit,
+    onResetTime: () -> Unit,
+    onOpenCities: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val timeFormatter = remember { DateTimeFormatter.ofPattern("HH:mm") }
+    val localClock = remember(nearest, time.epochSecond / 60) {
+        val tzId = nearest?.timezone ?: pack.plan.origin.timezone
+        runCatching {
+            val clock = time.atZone(ZoneId.of(tzId)).format(timeFormatter)
+            val offset = SolarCalculator.utcOffsetLabel(tzId, time)
+            "$clock ($offset)"
+        }.getOrDefault("—")
+    }
+
+    Surface(
+        color = Color(0xBD081020),
+        shape = RoundedCornerShape(22.dp),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
+        shadowElevation = 8.dp,
+        modifier = modifier
+    ) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
+            // 1. Optional compact tapped feature row (when a city, peak, or landmark pin is inspected)
+            cameraState.selectedFeature?.let { feature ->
+                SelectedFeatureCompactRow(
+                    feature = feature,
+                    pack = pack,
+                    progress = progress,
+                    flightTime = time,
+                    onFocusPoint = { cameraState.focusPoint(it) },
+                    onDismiss = { cameraState.selectedFeature = null }
+                )
+                HorizontalDivider(
+                    color = Color.White.copy(alpha = 0.10f),
+                    modifier = Modifier.padding(vertical = 5.dp)
+                )
+            }
+
+            // 2. Optional slim journey preview scrubber row
+            if (previewOpen) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        "Preview · ${
+                            time.atZone(ZoneId.of(pack.plan.origin.timezone))
+                                .format(DateTimeFormatter.ofPattern("d MMM HH:mm"))
+                        } (${(progress.fraction * 100).roundToInt()}%)",
+                        color = Amber,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    TextButton(
+                        onClick = onTogglePlay,
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                        modifier = Modifier.height(24.dp)
+                    ) {
+                        Text(if (isPlaying) "⏸ Pause" else "▶ Play", fontSize = 11.sp, color = Mint)
+                    }
+                    if (previewFraction != null) {
+                        TextButton(
+                            onClick = onResetTime,
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                            modifier = Modifier.height(24.dp)
+                        ) {
+                            Text("Use current time", fontSize = 10.sp, color = Muted)
+                        }
+                    }
+                    val sliderValue = ((previewFraction ?: progress.fraction.toFloat()) * 1000f)
+                        .roundToInt()
+                        .coerceIn(0, 1000)
+                    AndroidView(
+                        factory = { ctx ->
+                            SeekBar(ctx).apply {
+                                max = 1000
+                                contentDescription = "Preview journey scrubber"
+                                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                                    override fun onProgressChanged(seekBar: SeekBar?, value: Int, fromUser: Boolean) {
+                                        if (fromUser) {
+                                            onScrub((value / 1000f).coerceIn(0f, 1f))
+                                        }
+                                    }
+                                    override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                                    override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+                                })
+                            }
+                        },
+                        update = { seekBar ->
+                            if (seekBar.progress != sliderValue) {
+                                seekBar.progress = sliderValue
+                            }
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(22.dp)
+                    )
+                }
+                HorizontalDivider(
+                    color = Color.White.copy(alpha = 0.10f),
+                    modifier = Modifier.padding(vertical = 4.dp)
+                )
+            }
+
+            // 3. Primary single-line discreet bar: [Current location + local time + weather] | [Controls]
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    Modifier
+                        .weight(1f)
+                        .clickable { onOpenCities() },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp)
+                ) {
+                    Text(
+                        if (solarIsDay) "☀" else "☾",
+                        color = if (solarIsDay) PeakYellow else Color(0xFF9FB8FF),
+                        fontSize = 12.sp
+                    )
+                    Text(
+                        nearest?.let { "${it.name}, ${it.country}" } ?: "Open skies",
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1
+                    )
+                    Text("·", color = Muted, fontSize = 11.sp)
+                    Text(
+                        localClock,
+                        color = Color(0xFFBFD4EE),
+                        fontSize = 11.5.sp,
+                        maxLines = 1
+                    )
+                    Text("·", color = Muted, fontSize = 11.sp)
+                    Text(
+                        "${weather.temperature.roundToInt()}°C ${WeatherParser.conditionText(weather.code)}",
+                        color = Cream,
+                        fontSize = 11.5.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                // Discreet panel action chips & camera buttons
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    Surface(
+                        onClick = onOpenCities,
+                        color = Color(0xFF132038),
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, Mint.copy(alpha = 0.32f)),
+                        modifier = Modifier
+                            .height(28.dp)
+                            .semantics { contentDescription = "Along the route" }
+                    ) {
+                        Row(
+                            Modifier.padding(horizontal = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "Along the route (${pack.cities.size})",
+                                color = Mint,
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+
+                    Surface(
+                        onClick = onTogglePreview,
+                        color = if (previewOpen) IfeIndigoBright else Color(0xFF132038),
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
+                        modifier = Modifier.height(28.dp)
+                    ) {
+                        Box(Modifier.padding(horizontal = 9.dp), contentAlignment = Alignment.Center) {
+                            Text(
+                                if (previewOpen) "Close preview" else "Preview journey",
+                                color = if (previewOpen) Mint else Cream,
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+
+                    DiscreetIconButton(
+                        icon = Icons.Outlined.Flight,
+                        description = "Plane",
+                        active = cameraState.followPlane,
+                        onClick = { cameraState.toggleFollowPlane(progress, pack.cities) }
+                    )
+
+                    DiscreetIconButton(
+                        icon = Icons.Outlined.Explore,
+                        description = if (cameraState.headingUp) "Heading" else "North",
+                        active = cameraState.headingUp,
+                        onClick = { cameraState.toggleHeadingUp() }
+                    )
+
+                    DiscreetTextButton(
+                        label = "−",
+                        description = "Zoom out",
+                        onClick = { cameraState.zoomOut() }
+                    )
+
+                    DiscreetTextButton(
+                        label = "+",
+                        description = "Zoom in",
+                        onClick = { cameraState.zoomIn() }
+                    )
+
+                    if (!cameraState.isDefaultOverview) {
+                        Surface(
+                            onClick = { cameraState.resetToRouteOverview() },
+                            color = IfeIndigoBright,
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.24f)),
+                            modifier = Modifier.height(28.dp)
+                        ) {
+                            Box(Modifier.padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
+                                Text("Route", color = Color.White, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DiscreetIconButton(
+    icon: ImageVector,
+    description: String,
+    active: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = CircleShape,
+        color = if (active) Color(0xFF2563EB) else Color(0xFF15223C),
+        border = BorderStroke(1.dp, if (active) Color.White else Color.White.copy(alpha = 0.22f)),
+        modifier = Modifier
+            .size(28.dp)
+            .semantics { contentDescription = description }
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
+            Text(description, fontSize = 1.sp, color = Color.Transparent)
+        }
+    }
+}
+
+@Composable
+private fun DiscreetTextButton(
+    label: String,
+    description: String,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = CircleShape,
+        color = Color(0xFF15223C),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.22f)),
+        modifier = Modifier
+            .size(28.dp)
+            .semantics { contentDescription = description }
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(label, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun SelectedFeatureCompactRow(
+    feature: SelectedGlobeFeature,
+    pack: FlightPack,
+    progress: FlightProgress,
+    flightTime: Instant,
+    onFocusPoint: (GeoPoint) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val timeFormatter = remember { DateTimeFormatter.ofPattern("HH:mm") }
+    val title: String
+    val subtitle: String
+    val point: GeoPoint
+    val timezone: String?
+    val fact: String
+    val weather: WeatherHour?
+
+    when (feature) {
+        is SelectedGlobeFeature.CityFeature -> {
+            val c = feature.city
+            title = c.name
+            subtitle = IfeCatalog.countryDisplayName(c.country)
+            point = c.point
+            timezone = c.timezone
+            fact = IfeCatalog.cityFact(c)
+            weather = WeatherParser.nearest(pack.weather[c.id].orEmpty(), flightTime)
+                ?: SolarCalculator.estimateSurfaceWeather(c.point, flightTime)
+        }
+        is SelectedGlobeFeature.PeakFeature -> {
+            val p = feature.peak
+            title = "▲ ${p.name}"
+            subtitle = "${"%,d".format(p.elevationFt)} ft · ${p.region}"
+            point = p.point
+            timezone = null
+            fact = p.fact
+            weather = null
+        }
+        is SelectedGlobeFeature.PinFeature -> {
+            val pin = feature.pin
+            title = pin.name
+            subtitle = pin.country
+            point = pin.point
+            timezone = pin.timezone
+            fact = pin.fact
+            val nearestCityWithWx = pack.cities
+                .filter { it.id in pack.weather }
+                .minByOrNull { GreatCircle.distanceKm(it.point, pin.point) }
+            weather = nearestCityWithWx?.let { WeatherParser.nearest(pack.weather[it.id].orEmpty(), flightTime) }
+                ?: SolarCalculator.estimateSurfaceWeather(pin.point, flightTime)
+        }
+    }
+
+    val distKm = GreatCircle.distanceKm(progress.point, point).roundToInt()
+    val bearingDesc = GreatCircle.relativeBearingDescription(progress.point, progress.heading, point)
+        .substringBefore(" ·")
+    val dayNight = SolarCalculator.dayNightLabel(point, flightTime)
+    val localClock = timezone?.let { tz ->
+        runCatching {
+            val clock = flightTime.atZone(ZoneId.of(tz)).format(timeFormatter)
+            val offset = SolarCalculator.utcOffsetLabel(tz, flightTime)
+            "$clock ($offset)"
+        }.getOrNull()
+    }
+
+    Column {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(title, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            Text(subtitle, color = Color(0xFF93C5FD), fontSize = 11.sp)
+            Text("·", color = Muted, fontSize = 11.sp)
+            Text("$bearingDesc ($distKm km)", color = Mint, fontSize = 11.sp)
+            if (localClock != null) {
+                Text("·", color = Muted, fontSize = 11.sp)
+                Text("Local $localClock", color = Color(0xFFDBEAFE), fontSize = 11.sp)
+            }
+            Text("·", color = Muted, fontSize = 11.sp)
+            Text(dayNight, color = Color(0xFFFDE68A), fontSize = 11.sp)
+            if (weather != null) {
+                Text(
+                    "${weather.temperature.roundToInt()}°C ${WeatherParser.conditionText(weather.code)}",
+                    color = Color.White,
+                    fontSize = 11.sp
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            TextButton(
+                onClick = { onFocusPoint(point) },
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                modifier = Modifier.height(22.dp)
+            ) {
+                Text("View", color = Mint, fontSize = 11.sp)
+            }
+            IconButton(onClick = onDismiss, modifier = Modifier.size(22.dp)) {
+                Icon(
+                    Icons.Outlined.Close,
+                    contentDescription = "Dismiss waypoint info",
+                    tint = Color.White.copy(alpha = 0.7f),
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+        }
+        Text(
+            fact,
+            color = Color(0xFFCBD5E1),
+            fontSize = 11.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 

@@ -36,7 +36,7 @@ class GlobeProjection(
     // At overview zoom (1.0), radius is large enough that the curved northern horizon arcs
     // gracefully across the top ~13% of the landscape frame while filling the bottom width.
     val radius: Float = (maxOf(width, height) * 0.68 * zoom).toFloat()
-    val horizonTopY: Float = (height * 0.125f).coerceAtLeast(44f)
+    val horizonTopY: Float = (height * 0.138f).coerceAtLeast(48f)
     val sphereCenterX: Float = width * 0.50f
     val sphereCenterY: Float = run {
         val overviewCy = horizonTopY + radius

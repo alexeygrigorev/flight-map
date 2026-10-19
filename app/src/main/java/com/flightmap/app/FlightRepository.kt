@@ -18,14 +18,6 @@ import java.time.ZoneOffset
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
-data class CountryBoundary(
-    val name: String,
-    val iso: String,
-    val labelPoint: GeoPoint,
-    val population: Long,
-    val rings: List<List<GeoPoint>>
-)
-
 data class FlightPack(
     val plan: FlightPlan,
     val cities: List<City>,

@@ -132,4 +132,80 @@ class TrajectoryAndGlobeTest {
         // Point above the curved top horizon (y = 10) must be in outer space (null)
         assertNull(proj.unproject(960f, 10f))
     }
+
+    @Test
+    fun testGlobeLabelPlannerDecluttersAndPreventsOverlaps() {
+        val enriched = TrajectoryCatalog.enrichPlan(FlightPlan("AY87", hel, pvg, dep, arr))
+        val midNow = Instant.parse("2026-10-18T02:00:00Z")
+        val progress = FlightTiming.progress(enriched, midNow)
+        val proj = GlobeProjection(
+            width = 1920f,
+            height = 1080f,
+            centerLat = 46.5,
+            centerLon = 42.0,
+            zoom = 1.0
+        )
+
+        val candidateCities = listOf(
+            City("hel", "Helsinki", "FI", GeoPoint(60.1699, 24.9384), "Europe/Helsinki", 650_000),
+            City("sto", "Stockholm", "SE", GeoPoint(59.3293, 18.0686), "Europe/Stockholm", 975_000),
+            City("waw", "Warsaw", "PL", GeoPoint(52.2297, 21.0122), "Europe/Warsaw", 1_790_000),
+            City("min", "Minsk", "BY", GeoPoint(53.9006, 27.5590), "Europe/Minsk", 2_000_000),
+            City("kyi", "Kyiv", "UA", GeoPoint(50.4501, 30.5234), "Europe/Kyiv", 2_950_000),
+            City("otp", "Bucharest", "RO", GeoPoint(44.4268, 26.1025), "Europe/Bucharest", 1_830_000),
+            City("tbs", "Tbilisi", "GE", GeoPoint(41.7151, 44.8271), "Asia/Tbilisi", 1_110_000),
+            City("gyd", "Baku", "AZ", GeoPoint(40.4093, 49.8671), "Asia/Baku", 2_300_000),
+            City("ala", "Almaty", "KZ", GeoPoint(43.2220, 76.8512), "Asia/Almaty", 1_970_000),
+            City("urc", "Ürümqi", "CN", GeoPoint(43.8256, 87.6168), "Asia/Urumqi", 3_500_000),
+            City("stropkov", "Stropkov", "SK", GeoPoint(49.2022, 21.6522), "Europe/Bratislava", 10_000),
+            City("jibou", "Jibou", "RO", GeoPoint(47.2583, 23.2583), "Europe/Bucharest", 10_400),
+            City("ayancik", "Ayancık", "TR", GeoPoint(41.9447, 34.5861), "Europe/Istanbul", 23_000)
+        )
+
+        val candidateCountries = listOf(
+            CountryBoundary("Finland", "FI", GeoPoint(61.9, 25.7), 5_500_000L),
+            CountryBoundary("Sweden", "SE", GeoPoint(60.1, 18.6), 10_400_000L),
+            CountryBoundary("Poland", "PL", GeoPoint(52.2, 21.0), 38_000_000L),
+            CountryBoundary("Belarus", "BY", GeoPoint(53.9, 27.6), 9_400_000L),
+            CountryBoundary("Ukraine", "UA", GeoPoint(50.4, 30.5), 41_000_000L),
+            CountryBoundary("Georgia", "GE", GeoPoint(41.7, 44.8), 3_700_000L),
+            CountryBoundary("Kazakhstan", "KZ", GeoPoint(48.0, 66.9), 19_000_000L)
+        )
+
+        val layout = GlobeLabelPlanner.plan(
+            proj = proj,
+            plan = enriched,
+            progress = progress,
+            peaks = IfeCatalog.mountainPeaks,
+            pins = IfeCatalog.landmarkPins,
+            cities = candidateCities,
+            countries = candidateCountries,
+            topSafePx = 68f,
+            bottomSafePx = 88f
+        )
+
+        val placedCityNames = layout.cities.map { it.city.name }.toSet()
+        assertFalse("Small town Stropkov must not appear at overview zoom", "Stropkov" in placedCityNames)
+        assertFalse("Small town Jibou must not appear at overview zoom", "Jibou" in placedCityNames)
+        assertFalse("Small town Ayancık must not appear at overview zoom", "Ayancık" in placedCityNames)
+        assertFalse("Duplicate Helsinki city dot must be suppressed near HEL endpoint at overview zoom", "Helsinki" in placedCityNames)
+
+        // Verify strict upper bounds at overview zoom
+        assertTrue("Overview pins should be <= 6", layout.pins.size <= 6)
+        assertTrue("Overview peaks should be <= 5", layout.peaks.size <= 5)
+        assertTrue("Overview cities should be <= 14", layout.cities.size <= 14)
+        assertTrue("Overview countries should be <= 9", layout.countries.size <= 9)
+
+        // Verify zero pairwise intersections among all placed label/marker boxes
+        val boxes = layout.occupiedBoxes
+        for (i in boxes.indices) {
+            for (j in i + 1 until boxes.size) {
+                assertFalse(
+                    "Occupied boxes $i (${boxes[i]}) and $j (${boxes[j]}) must not intersect",
+                    boxes[i].intersects(boxes[j])
+                )
+            }
+        }
+    }
 }
+
