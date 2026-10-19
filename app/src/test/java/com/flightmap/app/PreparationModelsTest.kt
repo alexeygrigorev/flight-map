@@ -222,11 +222,56 @@ class PreparationModelsTest {
         val list = listOf(pack1, pack2)
         val json = gson.toJson(list)
 
-        val type = object : TypeToken<List<FlightPack>>() {}.type
+        val type = object : com.google.gson.reflect.TypeToken<List<FlightPack>>() {}.type
         val restoredList: List<FlightPack> = gson.fromJson(json, type)
 
         assertEquals(2, restoredList.size)
         assertEquals("AY87", restoredList[0].plan.number)
         assertEquals("LH400", restoredList[1].plan.number)
+    }
+
+    @Test
+    fun testDenseCorridorPackSummarySerialization() {
+        val detailSummary = "Saved · z0–6 / z7–9 / z9–10 · 974 tiles · 32.1 MB"
+        val pack = FlightPack(
+            plan = plan,
+            cities = emptyList(),
+            weather = emptyMap(),
+            preparedAt = dep,
+            mapReady = true,
+            mapRegionIds = listOf(10L, 20L, 30L),
+            mapDetailSummary = detailSummary
+        )
+
+        val json = gson.toJson(pack)
+        val restored = gson.fromJson(json, FlightPack::class.java)
+
+        assertEquals(detailSummary, restored.effectiveMapDetailSummary)
+        assertEquals(listOf(10L, 20L, 30L), restored.mapRegionIds)
+        assertTrue(restored.mapReady)
+    }
+
+    @Test
+    fun testCheckpointRestartStatePreservation() {
+        val checkpoint = PreparationCheckpoint(
+            plan = plan,
+            status = PreparationStatus.PAUSED,
+            stage = "Preparation paused",
+            mapRegionIds = listOf(101L, 102L, 103L),
+            mapReady = true,
+            mapDetail = "Saved · z0–6 / z7–9 / z9–10 · 974 tiles · 32.1 MB",
+            weatherReady = true,
+            weatherDetail = "600 city forecasts saved",
+            sampledWeatherIds = listOf("c1", "c2")
+        )
+
+        val json = gson.toJson(checkpoint)
+        val restored = gson.fromJson(json, PreparationCheckpoint::class.java)
+
+        assertEquals(PreparationStatus.PAUSED, restored.status)
+        assertEquals(listOf(101L, 102L, 103L), restored.mapRegionIds)
+        assertTrue(restored.mapReady)
+        assertTrue(restored.weatherReady)
+        assertEquals("Saved · z0–6 / z7–9 / z9–10 · 974 tiles · 32.1 MB", restored.mapDetail)
     }
 }
