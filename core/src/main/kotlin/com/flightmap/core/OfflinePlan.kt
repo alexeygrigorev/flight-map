@@ -245,11 +245,11 @@ object OfflinePlan {
         var airportTiles = SlippyTiles.countUniqueTiles(airportBoxes, airportMinZoom.toInt(), airportMaxZoom.toInt())
         var airportBytes = airportTiles.toLong() * OfflinePlanConfig.BYTES_PER_AIRPORT_TILE
 
-        // 3. Narrow continuous corridor: zoom 7–8
+        // 3. Dense continuous corridor: zoom 7–9 (adapted to budget)
         var includeCorridor = true
-        var corrLatMargin = 0.35 // ~39km margin
+        var corrLatMargin = 0.38 // ~42km margin (~84km corridor width)
         var corrMinZoom = 7.0
-        var corrMaxZoom = 8.0
+        var corrMaxZoom = 9.0
         var corrBoxes = OfflineGeometry.createBoxesForPoints(corridorPointsForMargin(corrLatMargin), corrLatMargin)
         var corrTiles = SlippyTiles.countUniqueTiles(corrBoxes, corrMinZoom.toInt(), corrMaxZoom.toInt())
         var corrBytes = corrTiles.toLong() * OfflinePlanConfig.BYTES_PER_CORRIDOR_TILE
@@ -258,7 +258,28 @@ object OfflinePlan {
         var totalBytes = broadBytes + corrBytes + airportBytes
 
         // Adaptive bounding: deterministic tuning to stay strictly under maxTiles and maxBytes
-        // Stage A: Narrow corridor margin (maintaining continuous sample point density)
+        // Stage A: Narrow corridor margin from 0.38 down to 0.25
+        while ((totalTiles > maxTiles || totalBytes > maxBytes) && corrLatMargin > 0.25) {
+            corrLatMargin -= 0.05
+            corrBoxes = OfflineGeometry.createBoxesForPoints(corridorPointsForMargin(corrLatMargin), corrLatMargin)
+            corrTiles = SlippyTiles.countUniqueTiles(corrBoxes, corrMinZoom.toInt(), corrMaxZoom.toInt())
+            corrBytes = corrTiles.toLong() * OfflinePlanConfig.BYTES_PER_CORRIDOR_TILE
+            totalTiles = broadTiles + corrTiles + airportTiles
+            totalBytes = broadBytes + corrBytes + airportBytes
+        }
+
+        // Stage B: If still exceeding budget, reduce corridor max zoom from 9 to 8
+        if ((totalTiles > maxTiles || totalBytes > maxBytes) && corrMaxZoom == 9.0) {
+            corrMaxZoom = 8.0
+            corrLatMargin = 0.35 // reset margin for zoom 8 baseline
+            corrBoxes = OfflineGeometry.createBoxesForPoints(corridorPointsForMargin(corrLatMargin), corrLatMargin)
+            corrTiles = SlippyTiles.countUniqueTiles(corrBoxes, corrMinZoom.toInt(), corrMaxZoom.toInt())
+            corrBytes = corrTiles.toLong() * OfflinePlanConfig.BYTES_PER_CORRIDOR_TILE
+            totalTiles = broadTiles + corrTiles + airportTiles
+            totalBytes = broadBytes + corrBytes + airportBytes
+        }
+
+        // Stage C: Narrow corridor margin further down to 0.15
         while ((totalTiles > maxTiles || totalBytes > maxBytes) && corrLatMargin > 0.15) {
             corrLatMargin -= 0.05
             corrBoxes = OfflineGeometry.createBoxesForPoints(corridorPointsForMargin(corrLatMargin), corrLatMargin)
@@ -268,7 +289,7 @@ object OfflinePlan {
             totalBytes = broadBytes + corrBytes + airportBytes
         }
 
-        // Stage B: Narrow broad margin (maintaining continuous sample point density)
+        // Stage D: Narrow broad margin (maintaining continuous sample point density)
         while ((totalTiles > maxTiles || totalBytes > maxBytes) && broadLatMargin > 1.0) {
             broadLatMargin -= 0.25
             broadBoxes = OfflineGeometry.createBoxesForPoints(broadPointsForMargin(broadLatMargin), broadLatMargin)
@@ -278,7 +299,7 @@ object OfflinePlan {
             totalBytes = broadBytes + corrBytes + airportBytes
         }
 
-        // Stage C: Narrow airport margin
+        // Stage E: Narrow airport margin
         while ((totalTiles > maxTiles || totalBytes > maxBytes) && airportLatMargin > 0.12) {
             airportLatMargin -= 0.04
             airportBoxes = OfflineGeometry.createBoxesForPoints(listOf(origin, destination), airportLatMargin)
@@ -288,16 +309,17 @@ object OfflinePlan {
             totalBytes = broadBytes + corrBytes + airportBytes
         }
 
-        // Stage D: Reduce corridor max zoom from 8 to 7
+        // Stage F: Reduce corridor max zoom from 8 to 7
         if ((totalTiles > maxTiles || totalBytes > maxBytes) && corrMaxZoom == 8.0) {
             corrMaxZoom = 7.0
+            corrBoxes = OfflineGeometry.createBoxesForPoints(corridorPointsForMargin(corrLatMargin), corrLatMargin)
             corrTiles = SlippyTiles.countUniqueTiles(corrBoxes, corrMinZoom.toInt(), corrMaxZoom.toInt())
             corrBytes = corrTiles.toLong() * OfflinePlanConfig.BYTES_PER_CORRIDOR_TILE
             totalTiles = broadTiles + corrTiles + airportTiles
             totalBytes = broadBytes + corrBytes + airportBytes
         }
 
-        // Stage E: Reduce airport max zoom from 10 to 9
+        // Stage G: Reduce airport max zoom from 10 to 9
         if ((totalTiles > maxTiles || totalBytes > maxBytes) && airportMaxZoom == 10.0) {
             airportMaxZoom = 9.0
             airportTiles = SlippyTiles.countUniqueTiles(airportBoxes, airportMinZoom.toInt(), airportMaxZoom.toInt())
@@ -306,7 +328,7 @@ object OfflinePlan {
             totalBytes = broadBytes + corrBytes + airportBytes
         }
 
-        // Stage F: Drop airport layer if still exceeding budget
+        // Stage H: Drop airport layer if still exceeding budget
         if (totalTiles > maxTiles || totalBytes > maxBytes) {
             includeAirport = false
             airportTiles = 0
@@ -316,7 +338,7 @@ object OfflinePlan {
             totalBytes = broadBytes + corrBytes + airportBytes
         }
 
-        // Stage G: Drop corridor layer if still exceeding budget
+        // Stage I: Drop corridor layer if still exceeding budget
         if (totalTiles > maxTiles || totalBytes > maxBytes) {
             includeCorridor = false
             corrTiles = 0
@@ -326,7 +348,7 @@ object OfflinePlan {
             totalBytes = broadBytes + corrBytes + airportBytes
         }
 
-        // Stage H: Reduce broad max zoom from 6 to 5, then 4
+        // Stage J: Reduce broad max zoom from 6 to 5, then 4
         while ((totalTiles > maxTiles || totalBytes > maxBytes) && broadMaxZoom > 4.0) {
             broadMaxZoom -= 1.0
             broadTiles = SlippyTiles.countUniqueTiles(broadBoxes, broadMinZoom.toInt(), broadMaxZoom.toInt())

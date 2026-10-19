@@ -77,6 +77,27 @@
       }
     },
     {
+      "id": "boundary-state",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "boundary",
+      "minzoom": 4,
+      "filter": [
+        "==",
+        "admin_level",
+        4
+      ],
+      "paint": {
+        "line-color": "#435d6e",
+        "line-width": 0.5,
+        "line-dasharray": [
+          3,
+          2
+        ],
+        "line-opacity": 0.6
+      }
+    },
+    {
       "id": "waterway",
       "type": "line",
       "source": "openmaptiles",
@@ -140,6 +161,17 @@
       "paint": {
         "line-color": "#b8c9d1",
         "line-width": 2
+      }
+    },
+    {
+      "id": "airport-taxiways",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "aeroway",
+      "minzoom": 9,
+      "paint": {
+        "line-color": "#768c99",
+        "line-width": 1.0
       }
     }
   ]

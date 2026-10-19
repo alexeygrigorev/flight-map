@@ -103,7 +103,7 @@ class OfflinePlanTest {
         assertEquals(0.0, broad.minZoom, 0.01)
         assertEquals(6.0, broad.maxZoom, 0.01)
         assertEquals(7.0, corridor.minZoom, 0.01)
-        assertEquals(8.0, corridor.maxZoom, 0.01)
+        assertEquals(9.0, corridor.maxZoom, 0.01)
         assertEquals(9.0, airport.minZoom, 0.01)
         assertEquals(10.0, airport.maxZoom, 0.01)
 
@@ -125,7 +125,7 @@ class OfflinePlanTest {
         val plan = sampleFlight("AY87", "HEL", 60.3172, 24.9633, "PVG", 31.1443, 121.8083)
         val offlinePlan = OfflinePlan.create(plan)
 
-        assertTrue(offlinePlan.totalEstimatedTiles in 250..800)
+        assertTrue(offlinePlan.totalEstimatedTiles in 250..1200)
         assertTrue(offlinePlan.totalEstimatedTiles <= 2900)
         assertTrue(offlinePlan.totalEstimatedBytes <= 49_000_000L)
 
@@ -236,6 +236,22 @@ class OfflinePlanTest {
         } catch (e: IllegalArgumentException) {
             assertTrue(e.message?.contains("Cannot fit route into requested budget") == true)
         }
+    }
+
+    @Test
+    fun testDenserCorridorZoom9AndAdaptiveFallback() {
+        val standardPlan = sampleFlight("AY87", "HEL", 60.3172, 24.9633, "PVG", 31.1443, 121.8083)
+        val standardOffline = OfflinePlan.create(standardPlan)
+        val standardCorridor = standardOffline.layers.first { it.id == "corridor" }
+        assertEquals(9.0, standardCorridor.maxZoom, 0.01)
+        assertTrue(standardOffline.totalEstimatedTiles in 500..1500)
+        assertTrue(standardOffline.totalEstimatedTiles <= 2900)
+
+        // When budget is constrained to 350 tiles, corridor adaptively falls back to zoom 8
+        val constrained = OfflinePlan.create(standardPlan, maxTiles = 350, maxBytes = 20_000_000L)
+        val constrainedCorridor = constrained.layers.first { it.id == "corridor" }
+        assertTrue(constrainedCorridor.maxZoom <= 8.0)
+        assertTrue(constrained.totalEstimatedTiles <= 350)
     }
 
     @Test
