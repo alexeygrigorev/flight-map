@@ -6,7 +6,7 @@ A native Android window-seat companion. Enter a flight and ticket times, prepare
 
 ## Use
 
-1. Install the debug APK from [Releases](https://github.com/alexeygrigorev/flight-map/releases). Android may ask permission to install from the browser/files app.
+1. Install the **release** APK from [Releases](https://github.com/alexeygrigorev/flight-map/releases) (signed; preferred). A debug APK may also be listed for development. Android may ask permission to install from the browser/files app.
 2. Enter a flight number and departure date. AY87 has a bundled HEL–PVG schedule fallback; other flights use manual entry. Search airport codes or names. Confirm **both local dates and times against your ticket**, including the arrival date. Airport time zones are shown below the fields.
 3. Tap **Prepare for flight** while connected. Preparation runs in a foreground service with a progress notification, so you can leave the app. You can pause and resume; interrupted work is saved for recovery after a restart. Wait for the readiness checks before enabling airplane mode. Forecast dates must be within Open-Meteo's forecast window (approximately 16 days). Partial failures are shown explicitly and can be retried.
 4. Open the saved flight, then enable airplane mode. In-flight mode reads only saved data and disables MapLibre networking. Select a saved flight from the list; several packs can be retained and deleted independently. Packs survive app restarts.
@@ -33,6 +33,31 @@ export ANDROID_HOME=/path/to/Android/Sdk
 # app/build/outputs/apk/debug/app-debug.apk
 ```
 
+### Release signing
+
+Release builds are signed with a keystore that lives **outside** the repo. Never commit the keystore or passwords.
+
+1. Create a PKCS12 keystore (once), e.g. `~/.flight-map/keys/flight-map-release.keystore`.
+2. Put a gitignored `keystore.properties` at the repo root (also keep a copy under `~/.flight-map/`):
+
+```properties
+storeFile=/home/YOU/.flight-map/keys/flight-map-release.keystore
+storePassword=...
+keyAlias=flight-map-release
+keyPassword=...
+```
+
+`storeFile` may be absolute or relative to the repo root. For PKCS12, `storePassword` and `keyPassword` must match.
+
+3. Build the signed release APK:
+
+```sh
+./gradlew :app:assembleRelease
+# app/build/outputs/apk/release/app-release.apk
+```
+
+Without `keystore.properties` (or all four `ANDROID_RELEASE_*` env vars for CI), `assembleRelease` / `packageRelease` fails closed instead of producing an unsigned APK. On the Hetzner build host the keystore is at `~/.flight-map/keys/flight-map-release.keystore` with properties at `~/.flight-map/keystore.properties` (symlink or copy into the worktree as `keystore.properties`).
+
 `core` is plain Kotlin/JVM: spherical distance/interpolation/bearing, bounded corridor selection, scheduled timing and strict weather parsing. JUnit tests cover poles, antipodes, date-line crossings, pre-/post-flight timing, invalid schedules and malformed forecasts.
 
 `app` contains Compose UI, a ViewModel, atomic JSON multi-pack and preparation-checkpoint persistence, foreground-service preparation, batched weather downloads, native offline region creation/verification and a lifecycle-aware MapView. No GPS/location permissions, accounts, analytics or API keys. Preparation sends city coordinates to Open-Meteo and tile requests to OpenFreeMap; no calls to those services are initiated by the in-flight UI.
@@ -56,7 +81,7 @@ It changes connectivity on that emulator; use an isolated AVD. It requires ADB a
 
 [Attribution, licenses and service policies](docs/DATA-SOURCES.md). [Generated design assets](docs/design/README.md).
 
-The fallback timetable is advisory, not a date-verified booking. Next: exact time-zone boundaries for airports near borders, accessibility/font-scale testing on physical devices, and a release signing process. The debug APK is intended for personal evaluation, not a Play Store release. Builds run locally on Hetzner; no GitHub Actions required.
+The fallback timetable is advisory, not a date-verified booking. Next: exact time-zone boundaries for airports near borders, accessibility/font-scale testing on physical devices. Release APKs are signed for sideload evaluation; this is not yet a Play Store release. Builds run locally on Hetzner; no GitHub Actions required.
 
 Additional v0.2 offline UI smoke (dedicated emulator only):
 
