@@ -29,6 +29,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     var mapReady by mutableStateOf(false); private set
     var screen by mutableStateOf("prepare"); private set
     var previewFraction by mutableStateOf<Float?>(null)
+    /** Takeoff-play clock: Play anchors wall-now to departure; scrub + return-to-current. */
+    var livePlay by mutableStateOf<LivePlayClock?>(null); private set
     var now by mutableStateOf(Instant.now()); private set
 
     init {
@@ -219,15 +221,97 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         val currentPack = pack ?: return
         if (busy) return
         val currentNow = Instant.now()
-        previewFraction = if (currentNow < currentPack.plan.departure || currentNow > currentPack.plan.arrival) {
-            0.24f
-        } else {
-            null
+        // Outside the real window: open ready for takeoff-play (clock starts when Play is pressed).
+        // Inside the real window: follow wall clock until the user presses Play / scrubs.
+        previewFraction = null
+        livePlay = null
+        if (currentNow < currentPack.plan.departure || currentNow > currentPack.plan.arrival) {
+            // Leave clock idle at scheduled takeoff until Play; scrub still works via startLivePlay/scrub.
+            previewFraction = 0f
         }
         MapLibre.setConnected(false)
         screen = "flight"
     }
-    fun edit() { screen = "prepare"; previewFraction = null; MapLibre.setConnected(true) }
-    fun effectiveNow(): Instant = pack?.plan?.let { p -> previewFraction?.let { p.departure.plusMillis((Duration.between(p.departure, p.arrival).toMillis() * it).toLong()) } } ?: now
+
+    /** Press Play at takeoff: anchor wall-now to departure and advance 1:1. */
+    fun startLivePlay() {
+        val plan = pack?.plan ?: return
+        livePlay = LivePlayClock.start(plan, Instant.now())
+        previewFraction = null
+    }
+
+    /**
+     * Resume Play after a scrub: re-anchor so the scrubbed flight instant is "now"
+     * and the clock continues 1:1 from there toward arrival.
+     */
+    fun resumeLivePlayFromFraction(fraction: Float) {
+        val plan = pack?.plan ?: return
+        val clamped = fraction.coerceIn(0f, 1f).toDouble()
+        val total = Duration.between(plan.departure, plan.arrival).toMillis()
+        val scrubInstant = plan.departure.plusMillis((total * clamped).toLong())
+        val elapsed = Duration.between(plan.departure, scrubInstant)
+        livePlay = LivePlayClock(
+            wallStartedAt = Instant.now().minus(elapsed),
+            departure = plan.departure,
+            arrival = plan.arrival
+        )
+        previewFraction = null
+    }
+
+    fun pauseLivePlayKeepPosition() {
+        val clock = livePlay ?: return
+        val frac = clock.fraction(Instant.now()).toFloat()
+        livePlay = null
+        previewFraction = frac
+    }
+
+    fun scrubTo(fraction: Float) {
+        val clamped = fraction.coerceIn(0f, 1f)
+        val clock = livePlay
+        if (clock != null) {
+            livePlay = clock.withScrub(clamped.toDouble())
+            previewFraction = null
+        } else {
+            previewFraction = clamped
+        }
+    }
+
+    /** Always available: return to the live clock position (or wall clock if not in live-play). */
+    fun returnToCurrentPosition() {
+        val clock = livePlay
+        if (clock != null) {
+            livePlay = clock.returnToCurrent()
+            previewFraction = null
+        } else {
+            previewFraction = null
+        }
+    }
+
+    fun stopLivePlay() {
+        livePlay = null
+        previewFraction = null
+    }
+
+    fun edit() {
+        screen = "prepare"
+        previewFraction = null
+        livePlay = null
+        MapLibre.setConnected(true)
+    }
+
+    fun effectiveNow(): Instant {
+        val plan = pack?.plan
+        val clock = livePlay
+        if (plan != null && clock != null) {
+            return clock.flightNow(now)
+        }
+        if (plan != null) {
+            previewFraction?.let { frac ->
+                val total = Duration.between(plan.departure, plan.arrival).toMillis()
+                return plan.departure.plusMillis((total * frac).toLong())
+            }
+        }
+        return now
+    }
 }
 

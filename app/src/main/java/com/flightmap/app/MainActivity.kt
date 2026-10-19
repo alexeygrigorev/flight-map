@@ -625,15 +625,10 @@ private fun FlightScreen(vm: FlightViewModel) {
     var previewOpen by remember { mutableStateOf(false) }
     var isPlaying by remember { mutableStateOf(false) }
 
-    LaunchedEffect(isPlaying) {
-        while (isPlaying) {
-            kotlinx.coroutines.delay(120)
-            val current = vm.previewFraction ?: progress.fraction.toFloat()
-            if (current >= 1.0f) {
-                isPlaying = false
-            } else {
-                vm.previewFraction = (current + 0.004f).coerceAtMost(1.0f)
-            }
+    // Live-play advances via wall clock in ViewModel; stop Play UI when flight ends.
+    LaunchedEffect(isPlaying, vm.livePlay, progress.fraction) {
+        if (isPlaying && vm.livePlay != null && progress.fraction >= 1.0) {
+            isPlaying = false
         }
     }
 
@@ -777,18 +772,32 @@ private fun FlightScreen(vm: FlightViewModel) {
                 if (!previewOpen) isPlaying = false
             },
             onTogglePlay = {
-                if (vm.previewFraction != null && vm.previewFraction!! >= 1.0f) {
-                    vm.previewFraction = 0f
+                if (isPlaying) {
+                    vm.pauseLivePlayKeepPosition()
+                    isPlaying = false
+                } else {
+                    val scrub = vm.livePlay?.scrubFraction
+                    if (scrub != null) {
+                        vm.resumeLivePlayFromFraction(scrub.toFloat())
+                    } else if (vm.previewFraction != null && vm.livePlay == null) {
+                        vm.resumeLivePlayFromFraction(vm.previewFraction!!)
+                    } else {
+                        vm.startLivePlay()
+                    }
+                    isPlaying = true
+                    previewOpen = true
                 }
-                isPlaying = !isPlaying
             },
             onScrub = { value ->
                 isPlaying = false
-                vm.previewFraction = value
+                vm.scrubTo(value)
+                previewOpen = true
             },
             onResetTime = {
-                isPlaying = false
-                vm.previewFraction = null
+                // Always return to current position (live clock or wall clock).
+                val wasLive = vm.livePlay != null
+                vm.returnToCurrentPosition()
+                isPlaying = wasLive && vm.livePlay != null
             },
             onOpenCities = { citiesOpen = true },
             modifier = Modifier
@@ -1037,7 +1046,7 @@ private fun DiscreetIfePanel(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        "Preview · ${
+                        "Clock · ${
                             time.atZone(ZoneId.of(pack.plan.origin.timezone))
                                 .format(DateTimeFormatter.ofPattern("d MMM HH:mm"))
                         } (${(progress.fraction * 100).roundToInt()}%)",
@@ -1052,14 +1061,12 @@ private fun DiscreetIfePanel(
                     ) {
                         Text(if (isPlaying) "⏸ Pause" else "▶ Play", fontSize = 11.sp, color = Mint)
                     }
-                    if (previewFraction != null) {
-                        TextButton(
-                            onClick = onResetTime,
-                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                            modifier = Modifier.height(24.dp)
-                        ) {
-                            Text("Use current time", fontSize = 10.sp, color = Muted)
-                        }
+                    TextButton(
+                        onClick = onResetTime,
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                        modifier = Modifier.height(24.dp)
+                    ) {
+                        Text("Return to current position", fontSize = 10.sp, color = Muted)
                     }
                     val sliderValue = ((previewFraction ?: progress.fraction.toFloat()) * 1000f)
                         .roundToInt()
