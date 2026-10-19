@@ -5,7 +5,7 @@ object PlaceLabels {
     fun overview(plan: FlightPlan, cities: List<City>, limit: Int = 36): List<City> {
         if (limit <= 0 || cities.isEmpty()) return emptyList()
         val selected = linkedMapOf<String, City>()
-        val samples = GreatCircle.route(plan.origin.point, plan.destination.point, limit - 1)
+        val samples = GreatCircle.routeWaypoints(plan.effectiveWaypoints, limit - 1)
         for (point in samples) {
             val nearby = cities.filter { GreatCircle.distanceKm(point, it.point) <= 250 }
             val city = nearby.minByOrNull {

@@ -18,7 +18,8 @@ object FlightTiming {
             }
         }
 
-        val totalDistKm = GreatCircle.distanceKm(plan.origin.point, plan.destination.point)
+        val waypoints = plan.effectiveWaypoints
+        val totalDistKm = GreatCircle.routeDistanceKm(waypoints)
         val flownKm = totalDistKm * fraction
         val remainingKm = (totalDistKm - flownKm).coerceAtLeast(0.0)
 
@@ -27,16 +28,7 @@ object FlightTiming {
             else -> Duration.between(now, plan.arrival)
         }
 
-        val point = GreatCircle.interpolate(plan.origin.point, plan.destination.point, fraction)
-
-        val heading = if (totalDistKm < 1e-4) {
-            0.0
-        } else if (fraction >= 0.9999) {
-            val nearDest = GreatCircle.interpolate(plan.origin.point, plan.destination.point, 0.99)
-            GreatCircle.heading(nearDest, plan.destination.point)
-        } else {
-            GreatCircle.heading(point, plan.destination.point)
-        }
+        val (point, heading) = GreatCircle.interpolateWaypointsWithHeading(waypoints, fraction)
 
         val phase = when {
             now < plan.departure -> "SCHEDULED"

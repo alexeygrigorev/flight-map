@@ -135,13 +135,221 @@ object GreatCircle {
     }
 
     /**
+     * Computes total distance in kilometers along a multi-waypoint trajectory.
+     */
+    fun routeDistanceKm(waypoints: List<GeoPoint>): Double {
+        if (waypoints.size < 2) return 0.0
+        if (waypoints.size == 2) return distanceKm(waypoints[0], waypoints[1])
+        var sum = 0.0
+        for (i in 0 until waypoints.size - 1) {
+            sum += distanceKm(waypoints[i], waypoints[i + 1])
+        }
+        return sum
+    }
+
+    /**
+     * Interpolates position and forward heading along a multi-waypoint trajectory at [fraction] in [0.0, 1.0].
+     */
+    fun interpolateWaypointsWithHeading(waypoints: List<GeoPoint>, fraction: Double): Pair<GeoPoint, Double> {
+        if (waypoints.isEmpty()) return GeoPoint(0.0, 0.0) to 0.0
+        if (waypoints.size == 1) return waypoints[0] to 0.0
+        if (waypoints.size == 2) {
+            val a = waypoints[0]
+            val b = waypoints[1]
+            val totalDist = distanceKm(a, b)
+            val pt = interpolate(a, b, fraction)
+            val hdg = if (totalDist < 1e-4) {
+                0.0
+            } else if (fraction >= 0.9999) {
+                heading(interpolate(a, b, 0.99), b)
+            } else {
+                heading(pt, b)
+            }
+            return pt to hdg
+        }
+
+        val clamped = fraction.coerceIn(0.0, 1.0)
+        val segLengths = DoubleArray(waypoints.size - 1)
+        var totalKm = 0.0
+        for (i in 0 until waypoints.size - 1) {
+            val d = distanceKm(waypoints[i], waypoints[i + 1])
+            segLengths[i] = d
+            totalKm += d
+        }
+        if (totalKm < 1e-4) return waypoints.first() to 0.0
+        if (clamped <= 0.0) {
+            return waypoints.first() to heading(waypoints[0], waypoints[1])
+        }
+        if (clamped >= 1.0) {
+            val n = waypoints.size
+            val nearEnd = interpolate(waypoints[n - 2], waypoints[n - 1], 0.98)
+            return waypoints.last() to heading(nearEnd, waypoints.last())
+        }
+
+        val targetKm = totalKm * clamped
+        var accum = 0.0
+        for (i in segLengths.indices) {
+            val segLen = segLengths[i]
+            if (accum + segLen >= targetKm || i == segLengths.lastIndex) {
+                val localFrac = if (segLen > 1e-6) ((targetKm - accum) / segLen).coerceIn(0.0, 1.0) else 0.0
+                val pt = interpolate(waypoints[i], waypoints[i + 1], localFrac)
+                val hdg = if (localFrac >= 0.995) {
+                    val prevPt = interpolate(waypoints[i], waypoints[i + 1], 0.95)
+                    heading(prevPt, waypoints[i + 1])
+                } else {
+                    heading(pt, waypoints[i + 1])
+                }
+                return pt to hdg
+            }
+            accum += segLen
+        }
+        return waypoints.last() to 0.0
+    }
+
+    /**
+     * Generates evenly spaced points along a multi-waypoint trajectory.
+     */
+    fun routeWaypoints(waypoints: List<GeoPoint>, segments: Int = 128): List<GeoPoint> {
+        if (waypoints.size < 2) return waypoints
+        if (waypoints.size == 2) return route(waypoints[0], waypoints[1], segments)
+        if (segments <= 1) return listOf(waypoints.first(), waypoints.last())
+        val result = ArrayList<GeoPoint>(segments + 1)
+        for (i in 0..segments) {
+            val frac = i.toDouble() / segments.toDouble()
+            result.add(interpolateWaypointsWithHeading(waypoints, frac).first)
+        }
+        return result
+    }
+
+    /**
      * Returns cities located within the specified corridor width along the flight path,
      * sorted in sequence from origin towards destination.
-     * Robust against date-line crossing, poles, near-coincident, and antipodal paths.
+     * Supports both 2-point great-circle plans and multi-waypoint real filed trajectories.
      */
     fun corridorCities(plan: FlightPlan, cities: List<City>, widthKm: Double = 180.0): List<City> {
-        val pA = plan.origin.point
-        val pB = plan.destination.point
+        val waypoints = plan.effectiveWaypoints
+        if (waypoints.size > 2) {
+            return corridorCitiesForWaypoints(waypoints, cities, widthKm)
+        }
+        return corridorCitiesSegment(plan.origin.point, plan.destination.point, cities, widthKm)
+    }
+
+    fun corridorCitiesForWaypoints(waypoints: List<GeoPoint>, cities: List<City>, widthKm: Double = 180.0): List<City> {
+        if (waypoints.isEmpty()) return emptyList()
+        if (waypoints.size == 1) {
+            return cities.filter { distanceKm(waypoints[0], it.point) <= widthKm }
+        }
+        if (waypoints.size == 2) {
+            return corridorCitiesSegment(waypoints[0], waypoints[1], cities, widthKm)
+        }
+
+        // Precompute segment vectors for fast projection
+        data class SegGeometry(
+            val pA: GeoPoint,
+            val pB: GeoPoint,
+            val vA: Vector3D,
+            val nVec: Vector3D,
+            val tVec: Vector3D,
+            val segLenKm: Double,
+            val segAngle: Double,
+            val cumStartKm: Double
+        )
+
+        val segments = mutableListOf<SegGeometry>()
+        var cumKm = 0.0
+        for (i in 0 until waypoints.size - 1) {
+            val pA = waypoints[i]
+            val pB = waypoints[i + 1]
+            val dist = distanceKm(pA, pB)
+            if (dist < 1e-3) continue
+            val vA = toVector3D(pA)
+            val vB = toVector3D(pB)
+            val cross = vA.cross(vB)
+            val crossLen = cross.length()
+            val nVec = if (crossLen < 1e-12) {
+                val tangent = if (abs(vA.z) < 0.9) Vector3D(-vA.y, vA.x, 0.0).normalized()
+                else Vector3D(0.0, -vA.z, vA.y).normalized()
+                vA.cross(tangent).normalized()
+            } else {
+                cross.normalized()
+            }
+            val tVec = nVec.cross(vA).normalized()
+            segments.add(
+                SegGeometry(
+                    pA = pA,
+                    pB = pB,
+                    vA = vA,
+                    nVec = nVec,
+                    tVec = tVec,
+                    segLenKm = dist,
+                    segAngle = dist / EARTH_RADIUS_KM,
+                    cumStartKm = cumKm
+                )
+            )
+            cumKm += dist
+        }
+
+        if (segments.isEmpty()) {
+            return corridorCitiesSegment(waypoints.first(), waypoints.last(), cities, widthKm)
+        }
+
+        data class CityCandidate(val city: City, val alongTrackKm: Double)
+        val matching = ArrayList<CityCandidate>()
+
+        for (city in cities) {
+            val vP = toVector3D(city.point)
+            var bestDistKm = Double.MAX_VALUE
+            var bestAlongKm = 0.0
+
+            for (seg in segments) {
+                val sinDelta = vP.dot(seg.nVec).coerceIn(-1.0, 1.0)
+                val crossTrackAngle = abs(asin(sinDelta))
+                val crossTrackKm = EARTH_RADIUS_KM * crossTrackAngle
+
+                val proj = vP - (seg.nVec * vP.dot(seg.nVec))
+                val projLen = proj.length()
+                val alongAngle = if (projLen < 1e-12) {
+                    0.0
+                } else {
+                    val vProj = proj.normalized()
+                    val cosTheta = vProj.dot(seg.vA).coerceIn(-1.0, 1.0)
+                    val sinTheta = vProj.dot(seg.tVec)
+                    atan2(sinTheta, cosTheta)
+                }
+
+                val distToSegKm: Double
+                val clampedAlongKm: Double
+                when {
+                    alongAngle < 0.0 -> {
+                        distToSegKm = distanceKm(city.point, seg.pA)
+                        clampedAlongKm = seg.cumStartKm
+                    }
+                    alongAngle > seg.segAngle -> {
+                        distToSegKm = distanceKm(city.point, seg.pB)
+                        clampedAlongKm = seg.cumStartKm + seg.segLenKm
+                    }
+                    else -> {
+                        distToSegKm = crossTrackKm
+                        clampedAlongKm = seg.cumStartKm + alongAngle * EARTH_RADIUS_KM
+                    }
+                }
+
+                if (distToSegKm < bestDistKm) {
+                    bestDistKm = distToSegKm
+                    bestAlongKm = clampedAlongKm
+                }
+            }
+
+            if (bestDistKm <= widthKm) {
+                matching.add(CityCandidate(city, bestAlongKm))
+            }
+        }
+
+        matching.sortBy { it.alongTrackKm }
+        return matching.map { it.city }
+    }
+
+    private fun corridorCitiesSegment(pA: GeoPoint, pB: GeoPoint, cities: List<City>, widthKm: Double): List<City> {
         val vA = toVector3D(pA)
         val vB = toVector3D(pB)
 

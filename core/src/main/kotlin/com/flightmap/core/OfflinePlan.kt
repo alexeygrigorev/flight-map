@@ -212,20 +212,21 @@ object OfflinePlan {
         val flightKey = "${plan.number}:${plan.origin.iata}-${plan.destination.iata}:${plan.departure}:${plan.arrival}:${OfflinePlanConfig.PLANNER_VERSION}"
         val origin = plan.origin.point
         val destination = plan.destination.point
-        val totalDistanceKm = GreatCircle.distanceKm(origin, destination)
+        val waypoints = plan.effectiveWaypoints
+        val totalDistanceKm = GreatCircle.routeDistanceKm(waypoints)
 
         // Helper to generate dense points for continuous corridor without gaps
         fun corridorPointsForMargin(margin: Double): List<GeoPoint> {
             val maxStepKm = (margin * 111.0 * 0.75).coerceAtLeast(5.0)
             val segments = maxOf(80, (totalDistanceKm / maxStepKm).toInt())
-            return GreatCircle.route(origin, destination, segments)
+            return GreatCircle.routeWaypoints(waypoints, segments)
         }
 
         // Helper for continuous broad overview points
         fun broadPointsForMargin(margin: Double): List<GeoPoint> {
             val maxStepKm = (margin * 111.0 * 0.75).coerceAtLeast(10.0)
             val segments = maxOf(60, (totalDistanceKm / maxStepKm).toInt())
-            return GreatCircle.route(origin, destination, segments)
+            return GreatCircle.routeWaypoints(waypoints, segments)
         }
 
         // 1. Broad layer: zoom 0–6

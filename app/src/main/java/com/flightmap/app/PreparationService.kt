@@ -95,7 +95,8 @@ class PreparationService : Service() {
                     ACTION_START -> {
                         val planJson = intent.getStringExtra(EXTRA_PLAN_JSON)
                         if (planJson != null) {
-                            val plan = repository.gson.fromJson(planJson, FlightPlan::class.java)
+                            val rawPlan = repository.gson.fromJson(planJson, FlightPlan::class.java)
+                            val plan = com.flightmap.core.TrajectoryCatalog.enrichPlan(rawPlan)
                             startPreparationWorkflow(plan)
                         } else {
                             stopSelf()
@@ -294,7 +295,7 @@ class PreparationService : Service() {
                 var weather = currentCheckpoint.weather
                 var weatherReady = currentCheckpoint.weatherReady
                 var weatherDetail = currentCheckpoint.weatherDetail
-                val sampleCities = repository.selectWeatherSampleCities(cities, 600)
+                val sampleCities = repository.selectWeatherSampleCities(cities, 180)
                 val sampleCityIds = sampleCities.map { it.id }
 
                 if (!weatherReady) {

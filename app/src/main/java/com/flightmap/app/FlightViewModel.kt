@@ -178,7 +178,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             }
             val dep = local(departure, from); val arr = local(arrival, to)
             require(Duration.between(dep, arr).toHours() in 0..30) { "Arrival must be after departure, within 30 hours" }
-            FlightPlan(number.trim().uppercase().ifBlank { "MANUAL" }, from, to, dep, arr)
+            TrajectoryCatalog.enrichPlan(FlightPlan(number.trim().uppercase().ifBlank { "MANUAL" }, from, to, dep, arr))
         }.getOrElse { error = it.message ?: "Check airports and local dates/times"; return }
 
         preparationPlan = plan
@@ -215,7 +215,19 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun fly() { if (pack == null || busy) return; previewFraction = null; MapLibre.setConnected(false); screen = "flight" }
+    fun fly() {
+        val currentPack = pack ?: return
+        if (busy) return
+        val currentNow = Instant.now()
+        previewFraction = if (currentNow < currentPack.plan.departure || currentNow > currentPack.plan.arrival) {
+            0.24f
+        } else {
+            null
+        }
+        MapLibre.setConnected(false)
+        screen = "flight"
+    }
     fun edit() { screen = "prepare"; previewFraction = null; MapLibre.setConnected(true) }
     fun effectiveNow(): Instant = pack?.plan?.let { p -> previewFraction?.let { p.departure.plusMillis((Duration.between(p.departure, p.arrival).toMillis() * it).toLong()) } } ?: now
 }
+

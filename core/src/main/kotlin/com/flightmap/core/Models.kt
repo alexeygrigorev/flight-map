@@ -29,13 +29,30 @@ data class FlightPlan(
     val origin: Airport,
     val destination: Airport,
     val departure: Instant,
-    val arrival: Instant
+    val arrival: Instant,
+    val waypoints: List<GeoPoint>? = emptyList(),
+    val waypointNames: List<String>? = emptyList(),
+    val routeSource: String? = null,
+    val routeLabel: String? = null
 ) {
     init {
         require(arrival > departure) {
             "Arrival ($arrival) must be after departure ($departure)"
         }
     }
+
+    val effectiveWaypoints: List<GeoPoint>
+        get() = if (waypoints != null && waypoints.size >= 2) waypoints else listOf(origin.point, destination.point)
+
+    val effectiveWaypointNames: List<String>
+        get() = waypointNames.orEmpty()
+
+    val isRealTrajectory: Boolean
+        get() = waypoints != null && waypoints.size > 2 && routeSource != null && routeSource != "GREAT_CIRCLE_ESTIMATE"
+
+    val effectiveRouteLabel: String
+        get() = routeLabel?.takeIf { it.isNotBlank() }
+            ?: if (isRealTrajectory) "Filed ATS trajectory" else "Great-circle estimate"
 }
 
 data class FlightProgress(
@@ -54,3 +71,32 @@ data class WeatherHour(
     val code: Int,
     val isDay: Boolean = true
 )
+
+data class MountainPeak(
+    val id: String,
+    val name: String,
+    val elevationFt: Int,
+    val elevationM: Int,
+    val point: GeoPoint,
+    val region: String,
+    val fact: String
+)
+
+data class LandmarkPin(
+    val id: String,
+    val name: String,
+    val country: String,
+    val point: GeoPoint,
+    val timezone: String,
+    val fact: String
+)
+
+data class RouteTimezoneBand(
+    val timezone: String,
+    val utcOffsetLabel: String,
+    val representativeCity: String,
+    val localTimeLabel: String,
+    val isCurrent: Boolean,
+    val isDaylight: Boolean
+)
+

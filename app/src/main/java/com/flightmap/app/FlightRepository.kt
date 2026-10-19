@@ -18,6 +18,14 @@ import java.time.ZoneOffset
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
+data class CountryBoundary(
+    val name: String,
+    val iso: String,
+    val labelPoint: GeoPoint,
+    val population: Long,
+    val rings: List<List<GeoPoint>>
+)
+
 data class FlightPack(
     val plan: FlightPlan,
     val cities: List<City>,
@@ -80,7 +88,8 @@ class FlightRepository(private val context: Context) {
     private val checkpointFile = File(context.filesDir, "preparation-checkpoint.json")
 
     var airports: List<Airport> = emptyList(); private set
-    private var allCities: List<City> = emptyList()
+    var allCities: List<City> = emptyList(); private set
+    var countries: List<CountryBoundary> = emptyList(); private set
 
     suspend fun loadData() = withContext(Dispatchers.IO) {
         val airportList = mutableListOf<Airport>()
@@ -132,10 +141,55 @@ class FlightRepository(private val context: Context) {
             jsonReader.endArray()
         }
         allCities = cityList
+
+        runCatching {
+            val countryList = mutableListOf<CountryBoundary>()
+            context.assets.open("data/countries.json").bufferedReader().use { reader ->
+                val jr = JsonReader(reader)
+                jr.beginArray()
+                while (jr.hasNext()) {
+                    jr.beginObject()
+                    var name = ""; var iso = ""; var lat = 0.0; var lon = 0.0; var pop = 0L
+                    val rings = mutableListOf<List<GeoPoint>>()
+                    while (jr.hasNext()) {
+                        when (jr.nextName()) {
+                            "name" -> name = jr.nextString()
+                            "iso" -> iso = jr.nextString()
+                            "lat" -> lat = jr.nextDouble()
+                            "lon" -> lon = jr.nextDouble()
+                            "pop" -> pop = jr.nextLong()
+                            "rings" -> {
+                                jr.beginArray()
+                                while (jr.hasNext()) {
+                                    jr.beginArray()
+                                    val ring = mutableListOf<GeoPoint>()
+                                    while (jr.hasNext()) {
+                                        jr.beginArray()
+                                        val rLon = jr.nextDouble()
+                                        val rLat = jr.nextDouble()
+                                        jr.endArray()
+                                        ring.add(GeoPoint(rLat, rLon))
+                                    }
+                                    jr.endArray()
+                                    if (ring.size >= 3) rings.add(ring)
+                                }
+                                jr.endArray()
+                            }
+                            else -> jr.skipValue()
+                        }
+                    }
+                    jr.endObject()
+                    countryList.add(CountryBoundary(name, iso, GeoPoint(lat, lon), pop, rings))
+                }
+                jr.endArray()
+            }
+            countries = countryList
+        }
     }
 
     suspend fun corridor(plan: FlightPlan): List<City> = withContext(Dispatchers.Default) {
-        GreatCircle.corridorCities(plan, allCities, 180.0)
+        val enriched = TrajectoryCatalog.enrichPlan(plan)
+        GreatCircle.corridorCities(enriched, allCities, 180.0)
     }
 
     suspend fun readPacks(): List<FlightPack> = withContext(Dispatchers.IO) {
@@ -145,12 +199,14 @@ class FlightRepository(private val context: Context) {
                     val type = object : TypeToken<List<FlightPack>>() {}.type
                     val list: List<FlightPack>? = gson.fromJson(packsFile.readText(), type)
                     list?.filterNotNull()?.map { p ->
-                        if (p.mapDetailSummary == null || p.sampledWeatherIds == null) {
-                            p.copy(
-                                mapDetailSummary = p.effectiveMapDetailSummary,
-                                sampledWeatherIds = p.effectiveSampledWeatherIds
-                            )
-                        } else p
+                        val enrichedPlan = if (p.plan.waypoints.isNullOrEmpty() || p.plan.routeSource == null) {
+                            TrajectoryCatalog.enrichPlan(p.plan)
+                        } else p.plan
+                        p.copy(
+                            plan = enrichedPlan,
+                            mapDetailSummary = p.effectiveMapDetailSummary,
+                            sampledWeatherIds = p.effectiveSampledWeatherIds
+                        )
                     }
                 }.getOrNull() ?: emptyList()
             } else if (packFile.exists()) {
@@ -158,7 +214,11 @@ class FlightRepository(private val context: Context) {
                     gson.fromJson(packFile.readText(), FlightPack::class.java)
                 }.getOrNull()
                 if (single != null) {
+                    val enrichedPlan = if (single.plan.waypoints.isNullOrEmpty() || single.plan.routeSource == null) {
+                        TrajectoryCatalog.enrichPlan(single.plan)
+                    } else single.plan
                     val migrated = single.copy(
+                        plan = enrichedPlan,
                         mapDetailSummary = single.effectiveMapDetailSummary,
                         sampledWeatherIds = single.effectiveSampledWeatherIds
                     )
@@ -263,7 +323,7 @@ class FlightRepository(private val context: Context) {
         }
     }
 
-    fun selectWeatherSampleCities(cities: List<City>, maxLocations: Int = 600): List<City> =
+    fun selectWeatherSampleCities(cities: List<City>, maxLocations: Int = 180): List<City> =
         WeatherSampling.selectCities(cities, maxLocations)
 
     suspend fun weather(
@@ -274,7 +334,7 @@ class FlightRepository(private val context: Context) {
         progress: (Int, Int) -> Unit
     ): Map<String, List<WeatherHour>> = withContext(Dispatchers.IO) {
         if (cities.isEmpty()) return@withContext emptyMap()
-        val sampleCities = selectWeatherSampleCities(cities, 600)
+        val sampleCities = selectWeatherSampleCities(cities, 180)
         val result = existingWeather.toMutableMap()
 
         val neededSamples = sampleCities.filter { it.id !in result }
@@ -293,10 +353,10 @@ class FlightRepository(private val context: Context) {
             val url = "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&hourly=temperature_2m,weather_code,is_day&timeformat=unixtime&timezone=UTC&start_date=$start&end_date=$end"
             val key = java.security.MessageDigest.getInstance("SHA-256").digest(url.toByteArray()).joinToString("") { "%02x".format(it) }
             val cache = File(cacheDir, "$key.json")
-            val raw = if (cache.exists() && System.currentTimeMillis() - cache.lastModified() < 3 * 3600_000L) {
+            val raw = if (cache.exists() && System.currentTimeMillis() - cache.lastModified() < 24 * 3600_000L) {
                 cache.readText()
             } else {
-                delay(3300)
+                delay(750)
                 val response = client.newCall(
                     Request.Builder().url(url).header("User-Agent", "FlightMapAndroid/0.2 (personal offline flight companion)").build()
                 ).execute()

@@ -274,4 +274,26 @@ class PreparationModelsTest {
         assertTrue(restored.weatherReady)
         assertEquals("Saved · z0–6 / z7–9 / z9–10 · 974 tiles · 32.1 MB", restored.mapDetail)
     }
+
+    @Test
+    fun testEnrichedTrajectoryPackSerialization() {
+        val enriched = TrajectoryCatalog.enrichPlan(plan)
+        assertTrue(enriched.isRealTrajectory)
+        assertTrue(enriched.effectiveWaypoints.size >= 30)
+
+        val pack = FlightPack(
+            plan = enriched,
+            cities = emptyList(),
+            weather = emptyMap(),
+            preparedAt = dep,
+            mapReady = true
+        )
+        val json = gson.toJson(pack)
+        val restored = gson.fromJson(json, FlightPack::class.java)
+
+        assertTrue(restored.plan.isRealTrajectory)
+        assertEquals(enriched.effectiveWaypoints.size, restored.plan.effectiveWaypoints.size)
+        assertTrue(restored.plan.effectiveRouteLabel.contains("Southern Eurasian Corridor"))
+    }
 }
+
