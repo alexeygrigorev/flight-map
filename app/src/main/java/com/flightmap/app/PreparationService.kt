@@ -295,7 +295,7 @@ class PreparationService : Service() {
                 var weather = currentCheckpoint.weather
                 var weatherReady = currentCheckpoint.weatherReady
                 var weatherDetail = currentCheckpoint.weatherDetail
-                val sampleCities = repository.selectWeatherSampleCities(cities, 180)
+                val sampleCities = repository.selectWeatherSampleCities(cities, FlightPackCodec.MAX_WEATHER_SAMPLES)
                 val sampleCityIds = sampleCities.map { it.id }
 
                 if (!weatherReady) {
@@ -364,94 +364,29 @@ class PreparationService : Service() {
                     }
                 }
 
+                // 3. Bundled 3D satellite globe & country borders are immediately ready offline
+                val mapReady = true
+                val mapFailed = false
+                val ids = emptyList<Long>()
+                val mapDetail = "Bundled 3D satellite globe & country borders ready offline"
+
+                currentCheckpoint = currentCheckpoint.copy(
+                    mapRegionIds = ids,
+                    mapReady = mapReady,
+                    mapDetail = mapDetail,
+                    updatedAt = Instant.now()
+                )
+                repository.saveCheckpoint(currentCheckpoint)
+
                 _progressFlow.value = _progressFlow.value.copy(
                     weatherReady = weatherReady,
                     weatherDetail = weatherDetail,
                     sampledWeatherIds = sampleCityIds,
-                    stage = "Downloading offline vector corridor"
-                )
-                updateNotification(plan, "Downloading offline vector corridor…", 70, 100, false)
-
-                // 3. Map download
-                var mapReady = currentCheckpoint.mapReady
-                var mapDetail = currentCheckpoint.mapDetail
-                var ids = currentCheckpoint.mapRegionIds
-                var mapFailed = false
-
-                // Re-verify cached regions if any exist
-                if (mapReady && ids.isNotEmpty()) {
-                    withContext(Dispatchers.Main.immediate) {
-                        val maps = OfflineMaps(applicationContext)
-                        mapReady = maps.verify(ids)
-                        if (mapReady) {
-                            val detail = maps.detailSummary(ids)
-                            if (detail.isNotBlank()) mapDetail = detail
-                        }
-                    }
-                } else {
-                    mapReady = false
-                }
-
-                if (!mapReady) {
-                    try {
-                        val maps = withContext(Dispatchers.Main.immediate) {
-                            MapLibre.getInstance(applicationContext)
-                            MapLibre.setConnected(true)
-                            OfflineMaps(applicationContext)
-                        }
-
-                        ids = withContext(Dispatchers.Main.immediate) {
-                            maps.download(plan) { detail ->
-                                mapDetail = detail
-                                _progressFlow.value = _progressFlow.value.copy(mapDetail = detail)
-                                updateNotification(plan, "Map: $detail", 80, 100, false)
-                            }
-                        }
-
-                        mapReady = withContext(Dispatchers.Main.immediate) {
-                            maps.verify(ids)
-                        }
-                        mapDetail = withContext(Dispatchers.Main.immediate) {
-                            if (mapReady) {
-                                val summary = maps.detailSummary(ids)
-                                if (summary.isNotBlank()) summary else "Corridor saved · zoom 0–5"
-                            } else {
-                                "Map verification failed"
-                            }
-                        }
-
-                        currentCheckpoint = currentCheckpoint.copy(
-                            mapRegionIds = ids,
-                            mapReady = mapReady,
-                            mapDetail = mapDetail,
-                            updatedAt = Instant.now()
-                        )
-                        repository.saveCheckpoint(currentCheckpoint)
-                    } catch (e: TimeoutCancellationException) {
-                        mapFailed = true
-                        issues += "Map download timed out. Retry on Wi-Fi."
-                        mapDetail = "Bundled overview available · retry detail"
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        mapFailed = true
-                        issues += e.message ?: "Map download failed"
-                        mapDetail = "Bundled overview available · retry detail"
-                    }
-                }
-
-                val discoveredPending = withContext(Dispatchers.Main.immediate) {
-                    val maps = OfflineMaps(applicationContext)
-                    maps.regionsFor(plan)
-                }
-                ids = (ids + discoveredPending).distinct()
-
-                _progressFlow.value = _progressFlow.value.copy(
                     mapReady = mapReady,
                     mapDetail = mapDetail
                 )
 
-                // 4. Save pack (even if partial)
+                // 4. Save pack
                 val readyPack = FlightPack(
                     plan = plan,
                     cities = cities,
@@ -459,18 +394,10 @@ class PreparationService : Service() {
                     preparedAt = Instant.now(),
                     mapReady = mapReady,
                     mapRegionIds = ids,
-                    mapDetailSummary = mapDetail.ifBlank { "Corridor saved · zoom 0–5" },
+                    mapDetailSummary = mapDetail,
                     sampledWeatherIds = sampleCityIds
                 )
                 repository.save(readyPack)
-
-                // Preserve all pack native regions and in-progress/checkpoint ones
-                val allSavedPacks = repository.readPacks()
-                val allReferencedIds = (allSavedPacks.flatMap { it.mapRegionIds } + ids + discoveredPending).distinct()
-                withContext(Dispatchers.Main.immediate) {
-                    val maps = OfflineMaps(applicationContext)
-                    maps.discardUnreferenced(allReferencedIds)
-                }
 
                 val finalError = issues.takeIf { it.isNotEmpty() }?.joinToString("\n")
 

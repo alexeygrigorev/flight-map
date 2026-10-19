@@ -295,5 +295,138 @@ class PreparationModelsTest {
         assertEquals(enriched.effectiveWaypoints.size, restored.plan.effectiveWaypoints.size)
         assertTrue(restored.plan.effectiveRouteLabel.contains("Southern Eurasian Corridor"))
     }
+
+    @Test
+    fun testFlightPackCodecExportAndImportRoundTrip() {
+        val resolvedPlan = TrajectoryCatalog.resolvePlan(
+            flightNumber = "AY87",
+            dateStr = "2026-10-20",
+            airports = listOf(airportHel, airportPvg)
+        )
+        val c1 = City("waw", "Warsaw", "PL", GeoPoint(52.2297, 21.0122), "Europe/Warsaw", 1790000)
+        val c2 = City("ala", "Almaty", "KZ", GeoPoint(43.2220, 76.8512), "Asia/Almaty", 1970000)
+        val wx = listOf(
+            WeatherHour(resolvedPlan.departure, 9.5, 1, false),
+            WeatherHour(resolvedPlan.arrival, 18.0, 0, true)
+        )
+        val originalPack = FlightPack(
+            plan = resolvedPlan,
+            cities = listOf(c1, c2),
+            weather = mapOf("waw" to wx, "ala" to wx),
+            preparedAt = Instant.parse("2026-10-19T12:00:00Z"),
+            mapReady = true,
+            mapRegionIds = listOf(77L, 88L),
+            mapDetailSummary = "Bundled 3D satellite globe · 36 waypoints",
+            sampledWeatherIds = listOf("waw", "ala")
+        )
+
+        val exportedJson = FlightPackCodec.exportPackJson(originalPack, gson)
+        val importedPacks = FlightPackCodec.parsePacks(exportedJson, gson)
+
+        assertEquals(1, importedPacks.size)
+        val imported = importedPacks.single()
+        assertEquals("AY87", imported.plan.number)
+        assertEquals("HEL", imported.plan.origin.iata)
+        assertEquals("PVG", imported.plan.destination.iata)
+        assertEquals(resolvedPlan.departure, imported.plan.departure)
+        assertEquals(resolvedPlan.arrival, imported.plan.arrival)
+        assertTrue(imported.plan.isRealTrajectory)
+        assertEquals(36, imported.plan.effectiveWaypoints.size)
+        assertEquals(2, imported.cities.size)
+        assertTrue(imported.forecastsReady)
+        assertTrue(imported.mapReady)
+        assertTrue("Imported portable pack should clear device-local mapRegionIds", imported.mapRegionIds.isEmpty())
+    }
+
+    @Test
+    fun testFlightPackCodecParsesArrayAndPopulatesFallbackCorridorCities() {
+        val rawUnenrichedJson = """
+            [
+              {
+                "plan": {
+                  "number": "AY87",
+                  "origin": {"iata": "HEL", "name": "Helsinki", "point": {"lat": 60.3172, "lon": 24.9633}, "timezone": "Europe/Helsinki"},
+                  "destination": {"iata": "PVG", "name": "Shanghai", "point": {"lat": 31.1434, "lon": 121.8052}, "timezone": "Asia/Shanghai"},
+                  "departure": "2026-10-19T22:10:00Z",
+                  "arrival": "2026-10-20T10:25:00Z"
+                },
+                "cities": [],
+                "weather": {},
+                "preparedAt": "2026-10-19T12:00:00Z",
+                "mapReady": false
+              }
+            ]
+        """.trimIndent()
+
+        val fallbackCities = listOf(
+            City("waw", "Warsaw", "PL", GeoPoint(52.2297, 21.0122), "Europe/Warsaw", 1790000),
+            City("khm", "Khanty-Mansiysk", "RU", GeoPoint(61.0042, 69.0019), "Asia/Yekaterinburg", 100000)
+        )
+        val imported = FlightPackCodec.parsePacks(rawUnenrichedJson, gson, fallbackCities)
+        assertEquals(1, imported.size)
+        val pack = imported.single()
+        assertTrue(pack.plan.isRealTrajectory)
+        assertEquals(36, pack.plan.effectiveWaypoints.size)
+        assertEquals(listOf("Warsaw"), pack.cities.map { it.name })
+        assertTrue(pack.mapReady)
+        assertTrue(pack.forecastsReady)
+    }
+
+    @Test
+    fun testFlightPackCodecParsesMultipackAndDemoStartsNow() {
+        val multipackJson = """
+            {
+              "format": "flight-map-multipack",
+              "version": 1,
+              "demoStartsNow": true,
+              "packs": [
+                {
+                  "plan": {
+                    "number": "MU689",
+                    "origin": {"iata": "PVG", "name": "Shanghai Pudong", "point": {"lat": 31.1434, "lon": 121.8052}, "timezone": "Asia/Shanghai"},
+                    "destination": {"iata": "DYG", "name": "Zhangjiajie Hehua", "point": {"lat": 29.1028, "lon": 110.4431}, "timezone": "Asia/Shanghai"},
+                    "departure": "2026-10-20T02:00:00Z",
+                    "arrival": "2026-10-20T04:10:00Z"
+                  },
+                  "cities": [],
+                  "weather": {},
+                  "preparedAt": "2026-10-19T12:00:00Z",
+                  "mapReady": true
+                },
+                {
+                  "plan": {
+                    "number": "CZ3382",
+                    "origin": {"iata": "DYG", "name": "Zhangjiajie Hehua", "point": {"lat": 29.1028, "lon": 110.4431}, "timezone": "Asia/Shanghai"},
+                    "destination": {"iata": "CAN", "name": "Guangzhou Baiyun", "point": {"lat": 23.3924, "lon": 113.2988}, "timezone": "Asia/Shanghai"},
+                    "departure": "2026-10-23T13:40:00Z",
+                    "arrival": "2026-10-23T15:25:00Z"
+                  },
+                  "cities": [],
+                  "weather": {},
+                  "preparedAt": "2026-10-19T12:00:00Z",
+                  "mapReady": true
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val wuhan = City("wuh", "Wuhan", "CN", GeoPoint(30.5928, 114.3055), "Asia/Shanghai", 11000000)
+        val changsha = City("csx", "Changsha", "CN", GeoPoint(28.2282, 112.9388), "Asia/Shanghai", 10000000)
+        val imported = FlightPackCodec.parsePacksWithMeta(
+            rawJson = multipackJson,
+            gson = gson,
+            fallbackCities = listOf(wuhan, changsha)
+        )
+
+        assertTrue(imported.demoStartsNow)
+        assertEquals(2, imported.packs.size)
+        assertEquals("MU689", imported.packs[0].plan.number)
+        assertEquals(Instant.parse("2026-10-20T02:00:00Z"), imported.packs[0].plan.departure)
+        assertTrue(imported.packs[0].plan.isRealTrajectory)
+        assertTrue(imported.packs[0].forecastsReady)
+        assertEquals("CZ3382", imported.packs[1].plan.number)
+        assertTrue(imported.packs[1].plan.isRealTrajectory)
+    }
 }
+
 

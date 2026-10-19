@@ -246,5 +246,27 @@ object SolarCalculator {
             isDay = isDaylight(point, instant)
         )
     }
+
+    /**
+     * Generates an approximate hourly weather series covering [departure] through [arrival]
+     * (padded by 2 hours on each side) so corridor weather is immediately available offline
+     * or when dates fall outside live forecast windows.
+     */
+    fun estimateHourlySeries(
+        point: GeoPoint,
+        departure: Instant,
+        arrival: Instant
+    ): List<WeatherHour> {
+        val startEpochHour = (departure.epochSecond / 3600L) - 2L
+        val endEpochHour = maxOf(startEpochHour + 4L, (arrival.epochSecond / 3600L) + 2L)
+        val hours = ArrayList<WeatherHour>((endEpochHour - startEpochHour + 1L).toInt().coerceAtMost(96))
+        var h = startEpochHour
+        while (h <= endEpochHour && hours.size < 96) {
+            val t = Instant.ofEpochSecond(h * 3600L)
+            hours.add(estimateSurfaceWeather(point, t))
+            h++
+        }
+        return hours
+    }
 }
 

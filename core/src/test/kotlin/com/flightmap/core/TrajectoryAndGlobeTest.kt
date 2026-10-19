@@ -207,5 +207,170 @@ class TrajectoryAndGlobeTest {
             }
         }
     }
+
+    @Test
+    fun testSimplifiedResolveFromFlightNumberAndDateOnly() {
+        val airports = listOf(hel, pvg)
+        val plan = TrajectoryCatalog.resolvePlan(
+            flightNumber = "ay 087",
+            dateStr = "2026-10-20",
+            airports = airports
+        )
+
+        assertEquals("AY87", plan.number)
+        assertEquals("HEL", plan.origin.iata)
+        assertEquals("PVG", plan.destination.iata)
+        // 2026-10-20T01:10 Europe/Helsinki (UTC+3) = 2026-10-19T22:10:00Z
+        assertEquals(Instant.parse("2026-10-19T22:10:00Z"), plan.departure)
+        // 2026-10-20T18:25 Asia/Shanghai (UTC+8) = 2026-10-20T10:25:00Z
+        assertEquals(Instant.parse("2026-10-20T10:25:00Z"), plan.arrival)
+        assertTrue(plan.isRealTrajectory)
+        assertEquals(36, plan.effectiveWaypoints.size)
+        assertTrue(plan.effectiveRouteLabel.contains("Southern Eurasian Corridor"))
+    }
+
+    @Test
+    fun testSimplifiedResolveWithIcaoCallsignAndCustomDepartureTimeOnly() {
+        val airports = listOf(hel, pvg)
+        // User enters ICAO callsign FIN87, date 2026-10-20, and only HH:MM departure "16:40" (no arrival time or ISO string)
+        val plan = TrajectoryCatalog.resolvePlan(
+            flightNumber = "FIN87",
+            dateStr = "2026-10-20",
+            airports = airports,
+            departureOverride = "16:40"
+        )
+
+        assertEquals("AY87", plan.number)
+        assertEquals("HEL", plan.origin.iata)
+        assertEquals("PVG", plan.destination.iata)
+        // 2026-10-20T16:40 Europe/Helsinki (UTC+3) = 2026-10-20T13:40:00Z
+        assertEquals(Instant.parse("2026-10-20T13:40:00Z"), plan.departure)
+        // Block duration is 12h 15m -> 2026-10-21T01:55:00Z (09:55 next day in Shanghai)
+        assertEquals(Instant.parse("2026-10-21T01:55:00Z"), plan.arrival)
+        assertTrue(plan.isRealTrajectory)
+    }
+
+    @Test
+    fun testBuildScheduleForCustomRouteAutoCalculatesArrival() {
+        val fra = Airport("FRA", "Frankfurt", GeoPoint(50.0379, 8.5622), "Europe/Berlin")
+        val hnd = Airport("HND", "Tokyo Haneda", GeoPoint(35.5494, 139.7798), "Asia/Tokyo")
+        val schedule = TrajectoryCatalog.buildScheduleForRoute(
+            flightNumber = "LH716",
+            origin = fra,
+            destination = hnd,
+            date = LocalDate.of(2026, 10, 20),
+            departureTime = java.time.LocalTime.of(14, 0)
+        )
+
+        assertEquals("LH716", schedule.flightNumber)
+        assertEquals("FRA", schedule.originIata)
+        assertEquals("HND", schedule.destinationIata)
+        assertEquals("2026-10-20T14:00", schedule.departureLocalIso)
+        assertTrue("Arrival should be on the next day in Tokyo", schedule.arrivalLocalIso.startsWith("2026-10-21T"))
+    }
+
+    @Test
+    fun testTripFlightsCatalogSchedulesAndTrajectories() {
+        val dyg = Airport("DYG", "Zhangjiajie Hehua", GeoPoint(29.1028, 110.4431), "Asia/Shanghai")
+        val can = Airport("CAN", "Guangzhou Baiyun", GeoPoint(23.3924, 113.2988), "Asia/Shanghai")
+        val hnd = Airport("HND", "Tokyo Haneda", GeoPoint(35.5494, 139.7798), "Asia/Tokyo")
+        val nrt = Airport("NRT", "Tokyo Narita", GeoPoint(35.7647, 140.3864), "Asia/Tokyo")
+        val auh = Airport("AUH", "Abu Dhabi Zayed", GeoPoint(24.4330, 54.6511), "Asia/Dubai")
+        val ber = Airport("BER", "Berlin Brandenburg", GeoPoint(52.3667, 13.5033), "Europe/Berlin")
+        val airports = listOf(hel, pvg, dyg, can, hnd, nrt, auh, ber)
+
+        // 1. MU689 PVG -> DYG 2026-10-20 10:00 -> 12:10 Asia/Shanghai
+        val mu689 = TrajectoryCatalog.resolvePlan("MU689", "2026-10-20", airports)
+        assertEquals("MU689", mu689.number)
+        assertEquals("PVG", mu689.origin.iata)
+        assertEquals("DYG", mu689.destination.iata)
+        assertEquals(Instant.parse("2026-10-20T02:00:00Z"), mu689.departure)
+        assertEquals(Instant.parse("2026-10-20T04:10:00Z"), mu689.arrival)
+        assertTrue(mu689.isRealTrajectory)
+
+        // 2. CZ3382 DYG -> CAN 2026-10-23 21:40 -> 23:25 Asia/Shanghai
+        val cz3382 = TrajectoryCatalog.resolvePlan("CZ3382", "2026-10-23", airports)
+        assertEquals("CZ3382", cz3382.number)
+        assertEquals("DYG", cz3382.origin.iata)
+        assertEquals("CAN", cz3382.destination.iata)
+        assertEquals(Instant.parse("2026-10-23T13:40:00Z"), cz3382.departure)
+        assertEquals(Instant.parse("2026-10-23T15:25:00Z"), cz3382.arrival)
+        assertTrue(cz3382.isRealTrajectory)
+
+        // 3. CZ3085 CAN -> HND 2026-10-25 15:10 CST -> 20:00 JST
+        val cz3085 = TrajectoryCatalog.resolvePlan("CZ3085", "2026-10-25", airports)
+        assertEquals("CZ3085", cz3085.number)
+        assertEquals("CAN", cz3085.origin.iata)
+        assertEquals("HND", cz3085.destination.iata)
+        assertEquals(Instant.parse("2026-10-25T07:10:00Z"), cz3085.departure)
+        assertEquals(Instant.parse("2026-10-25T11:00:00Z"), cz3085.arrival)
+        assertTrue(cz3085.isRealTrajectory)
+
+        // 4. EY801 NRT -> AUH 2026-10-30 17:20 JST -> 2026-10-31 00:40 GST
+        val ey801 = TrajectoryCatalog.resolvePlan("EY801", "2026-10-30", airports)
+        assertEquals("EY801", ey801.number)
+        assertEquals("NRT", ey801.origin.iata)
+        assertEquals("AUH", ey801.destination.iata)
+        assertEquals(Instant.parse("2026-10-30T08:20:00Z"), ey801.departure)
+        assertEquals(Instant.parse("2026-10-30T20:40:00Z"), ey801.arrival)
+        assertTrue(ey801.isRealTrajectory)
+
+        // 5. DE2553 & EY1042 AUH -> BER 2026-10-31 02:20 GST -> 06:20 CET
+        val de2553 = TrajectoryCatalog.resolvePlan("DE2553", "2026-10-31", airports)
+        assertEquals("DE2553", de2553.number)
+        assertEquals("AUH", de2553.origin.iata)
+        assertEquals("BER", de2553.destination.iata)
+        assertEquals(Instant.parse("2026-10-30T22:20:00Z"), de2553.departure)
+        assertEquals(Instant.parse("2026-10-31T05:20:00Z"), de2553.arrival)
+        assertTrue(de2553.isRealTrajectory)
+
+        val ey1042 = TrajectoryCatalog.resolvePlan("EY1042", "2026-10-31", airports)
+        assertEquals("EY1042", ey1042.number)
+        assertEquals("AUH", ey1042.origin.iata)
+        assertEquals("BER", ey1042.destination.iata)
+        assertEquals(de2553.departure, ey1042.departure)
+        assertEquals(de2553.arrival, ey1042.arrival)
+    }
+
+    @Test
+    fun testGlobeProjectionScaleInvarianceAndPortraitSupport() {
+        // Verify that a low-res raster projection (520x234) and high-res canvas projection (2400x1080)
+        // have identical normalized coordinates, eliminating overlay misalignment ("поле полезло")
+        val lowRes = GlobeProjection(width = 520f, height = 234f, centerLat = 35.0, centerLon = 115.0, zoom = 1.2)
+        val highRes = GlobeProjection(width = 2400f, height = 1080f, centerLat = 35.0, centerLon = 115.0, zoom = 1.2)
+
+        assertEquals(lowRes.horizonTopY / lowRes.height, highRes.horizonTopY / highRes.height, 1e-4f)
+        assertEquals(lowRes.radius / lowRes.height, highRes.radius / highRes.height, 1e-4f)
+
+        val shanghai = GeoPoint(31.2304, 121.4737)
+        val pLow = lowRes.project(shanghai)
+        val pHigh = highRes.project(shanghai)
+        assertEquals(pLow.x / lowRes.width, pHigh.x / highRes.width, 1e-4f)
+        assertEquals(pLow.y / lowRes.height, pHigh.y / highRes.height, 1e-4f)
+
+        // Verify portrait orientation geometry frames the globe properly
+        val portrait = GlobeProjection(width = 1080f, height = 2400f, centerLat = 35.0, centerLon = 115.0, zoom = 1.0)
+        assertTrue(portrait.isPortrait)
+        val pPortrait = portrait.project(GeoPoint(35.0, 115.0))
+        assertTrue(pPortrait.visible)
+        assertTrue(pPortrait.y in portrait.horizonTopY..portrait.height)
+    }
+
+    @Test
+    fun testWikidataCityCardAndApproximateWeatherSeries() {
+        val zhangjiajie = City("dyg", "Zhangjiajie", "CN", GeoPoint(29.1170, 110.4792), "Asia/Shanghai", 1_517_000)
+        val card = IfeCatalog.wikidataCard(zhangjiajie)
+        assertEquals("Zhangjiajie", card.name)
+        assertEquals("China", card.country)
+        assertEquals("1,517,000", card.populationLabel)
+        assertTrue(card.description.contains("Hunan") || card.description.contains("Wulingyuan"))
+        assertTrue(card.summaryFact.contains("Wulingyuan") || card.summaryFact.contains("quartz"))
+
+        val series = SolarCalculator.estimateHourlySeries(zhangjiajie.point, dep, arr)
+        assertTrue("Approximate hourly series must cover flight duration", series.size >= 12)
+        assertTrue(series.first().time <= dep)
+        assertTrue(series.last().time >= arr)
+    }
 }
+
 

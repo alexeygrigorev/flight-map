@@ -7,21 +7,22 @@ A native Android window-seat companion. Enter a flight and ticket times, prepare
 ## Use
 
 1. Install the **release** APK from [Releases](https://github.com/alexeygrigorev/flight-map/releases) (signed; preferred). A debug APK may also be listed for development. Android may ask permission to install from the browser/files app.
-2. Enter a flight number and departure date. AY87 has a bundled HEL–PVG schedule fallback; other flights use manual entry. Search airport codes or names. Confirm **both local dates and times against your ticket**, including the arrival date. Airport time zones are shown below the fields.
-3. Tap **Prepare for flight** while connected. Preparation runs in a foreground service with a progress notification, so you can leave the app. You can pause and resume; interrupted work is saved for recovery after a restart. Wait for the readiness checks before enabling airplane mode. Forecast dates must be within Open-Meteo's forecast window (approximately 16 days). Partial failures are shown explicitly and can be retried.
-4. Open the saved flight, then enable airplane mode. In-flight mode reads only saved data and disables MapLibre networking. Select a saved flight from the list; several packs can be retained and deleted independently. Packs survive app restarts.
-5. Explore the map, nearby city, local time and forecast, or open **Along the route**. **Preview journey** moves through the scheduled flight; the PREVIEW badge and simulated time distinguish it from current-time mode.
+2. Enter your **flight number** and **date** (e.g. `MU689` on `2026-10-20`, `CZ3382` on `2026-10-23`, `CZ3085` on `2026-10-25`, `EY801` on `2026-10-30`, `DE2553`/`EY1042` on `2026-10-31`, or `AY87` on `2026-10-20`) — or tap one of the quick trip chips. The app shows a **Confirmed Flight** card with origin/destination airports, local departure/arrival times, and the filed ATS route corridor.
+3. Tap **Download data** once to preload the curated route cities (≤36 cities) and approximate/Open-Meteo weather. Once downloaded, the primary button switches to **Open offline flight** so you never accidentally re-download. An optional **Push reminder ~1h before departure** switch lets you refresh weather before boarding.
+4. Alternatively, tap **Load .flightpack.json** to import a single-flight pack, a multi-flight trip pack (`flight-map-multipack`), or a demo-now pack (`demoStartsNow: true`) without typing, or tap **Simulate flight** to immediately test the flight in 60× simulation mode.
+5. In the 3D globe view:
+   - Tap **Portrait / Landscape** in the top-right header to switch between horizontal landscape and vertical portrait orientations.
+   - Tap **Play / Sim** (or `▶ Takeoff Play`) at takeoff to anchor the flight clock to your press time, scrub forward/back along the route, toggle `1× Live` / `60× Sim`, or tap **Return to now** at any time to snap back to the current live clock position.
+   - Tap any city on the 3D globe (or **City card** in the bottom dock) to inspect a concise structured **Wikidata-style card** (description, population, local time, weather, wing direction/distance, and cultural/geographic fact) with `◀ Prev` / `Next ▶` navigation along the corridor.
 
-The position moves at constant elapsed fraction of **scheduled block time** along a spherical great circle. It is not live tracking. Actual routes, restricted airspace, taxi time, delays, speed and winds can put the aircraft far from the displayed estimate. Heading and distances follow that same model; ETA is the ticket arrival time.
+The position moves at constant elapsed fraction of **scheduled block time** (or takeoff-anchored play clock) along the filed route corridor.
 
 ## Offline contents
 
 - Route and schedule; 4,568 bundled medium/large IATA airports and 69,822 places with time zones.
-- All GeoNames cities5000 within 180 km of the route segment, ordered along the route; IANA time zones and city population.
-- Hourly Open-Meteo temperature and weather code for sampled corridor locations, covering the scheduled dates. Smaller places retain their names and local times even when no forecast was downloaded. Saved forecasts are timestamped, reused for up to three hours during preparation, and never described as live weather.
-- MapLibre offline **vector** detail concentrated along a narrow route band and around airports, using OpenFreeMap. One aggregate budget per flight pack stays below 3,000 tiles / 50 MB, with at most four parallel requests. Detail varies with distance from the route; outside the saved band only the bundled overview is available. A permanently bundled Natural Earth outline remains available if a corridor download fails.
-
-Readiness requires verified complete native offline regions and saved forecasts for the selected weather locations. Incomplete packs can still be opened with a **PARTIAL OFFLINE** indicator. Weather outside the saved hours displays unavailable. Paused and interrupted native regions are reused on resume. Saving a different flight preserves the other packs. Deleting a pack removes its regions while preserving any referenced by another pack or a pending preparation.
+- Curated corridor cities (up to 36 stratified highlights along the route) with structured Wikidata-style descriptions, facts, IANA time zones, and populations.
+- Single-batch Open-Meteo hourly forecast for up to 24 corridor cities with instant offline solar/seasonal approximate fallback so preparation completes in seconds.
+- Bundled NASA Blue Marble 3D satellite globe with anti-aliased horizon limb, Natural Earth vector country borders locked 1:1 to the sphere projection, and optional MapLibre offline corridor tiles.
 
 ## Build and test
 

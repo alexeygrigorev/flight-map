@@ -60,15 +60,170 @@ fun isSameFlight(a: FlightPlan, b: FlightPlan): Boolean =
     a.departure == b.departure &&
     a.arrival == b.arrival
 
+object FlightPackCodec {
+    const val MAX_CORRIDOR_CITIES = 36
+    const val MAX_WEATHER_SAMPLES = 24
+
+    fun createGson(): Gson = GsonBuilder()
+        .registerTypeAdapter(Instant::class.java, JsonSerializer<Instant> { src, _, _ -> JsonPrimitive(src.toString()) })
+        .registerTypeAdapter(Instant::class.java, JsonDeserializer { json, _, _ -> Instant.parse(json.asString) })
+        .create()
+
+    fun exportPackJson(pack: FlightPack, gson: Gson = createGson()): String =
+        gson.toJson(pack)
+
+    fun parsePacksWithMeta(
+        rawJson: String,
+        gson: Gson = createGson(),
+        fallbackCities: List<City> = emptyList(),
+        fallbackAirports: List<Airport> = emptyList()
+    ): ImportedFlightPacks {
+        val trimmed = rawJson.trim().removePrefix("\uFEFF")
+        require(trimmed.isNotEmpty()) { "Flight pack file is empty" }
+        val element = runCatching { JsonParser.parseString(trimmed) }.getOrElse {
+            throw IllegalArgumentException("File is not valid JSON: ${it.message}")
+        }
+        val airportsByIata = fallbackAirports.associateBy { it.iata }
+        var demoStartsNow = false
+        var title: String? = null
+
+        val rawPacks: List<FlightPack> = when {
+            element.isJsonObject -> {
+                val obj = element.asJsonObject
+                val isMultipackOrEnvelope = obj.has("format") || obj.has("flights") ||
+                    obj.has("packs") || obj.has("flight") || obj.has("demoStartsNow") ||
+                    (obj.has("plan") && obj.getAsJsonObject("plan")?.has("originIata") == true)
+                if (isMultipackOrEnvelope) {
+                    val imported = FlightPackImport.parse(trimmed, airportsByIata)
+                    demoStartsNow = imported.demoStartsNow
+                    title = imported.title
+                    // Also preserve inline cities/weather if present in multipack entries
+                    val arr = obj.getAsJsonArray("flights") ?: obj.getAsJsonArray("packs")
+                    if (arr != null && arr.size() == imported.packs.size) {
+                        imported.packs.mapIndexed { idx, skeleton ->
+                            val itemObj = arr[idx].takeIf { it.isJsonObject }?.asJsonObject
+                            val full = itemObj?.let { runCatching { gson.fromJson(it, FlightPack::class.java) }.getOrNull() }
+                            if (full != null && !full.cities.isNullOrEmpty()) {
+                                full.copy(plan = skeleton.plan)
+                            } else {
+                                skeleton
+                            }
+                        }
+                    } else if (obj.has("flight") && obj.get("flight").isJsonObject && imported.packs.size == 1) {
+                        val full = runCatching { gson.fromJson(obj.get("flight"), FlightPack::class.java) }.getOrNull()
+                        if (full != null && !full.cities.isNullOrEmpty()) {
+                            listOf(full.copy(plan = imported.packs[0].plan))
+                        } else {
+                            imported.packs
+                        }
+                    } else {
+                        imported.packs
+                    }
+                } else {
+                    val single = gson.fromJson(element, FlightPack::class.java)
+                        ?: throw IllegalArgumentException("Could not read FlightPack object")
+                    listOf(single)
+                }
+            }
+            element.isJsonArray -> {
+                val type = object : TypeToken<List<FlightPack>>() {}.type
+                val list: List<FlightPack>? = runCatching { gson.fromJson<List<FlightPack>>(element, type) }.getOrNull()
+                val valid = list?.filterNotNull().orEmpty().filter { runCatching { it.plan.origin.iata }.getOrNull()?.isNotBlank() == true }
+                if (valid.isNotEmpty()) {
+                    valid
+                } else {
+                    FlightPackImport.parse(trimmed, airportsByIata).packs
+                }
+            }
+            else -> throw IllegalArgumentException("Expected a FlightPack JSON object or array")
+        }
+        require(rawPacks.isNotEmpty()) { "No flight packs found in file" }
+        return ImportedFlightPacks(
+            packs = rawPacks.map { normalizeImportedPack(it, fallbackCities) },
+            demoStartsNow = demoStartsNow,
+            title = title
+        )
+    }
+
+    fun parsePacks(
+        rawJson: String,
+        gson: Gson = createGson(),
+        fallbackCities: List<City> = emptyList(),
+        fallbackAirports: List<Airport> = emptyList()
+    ): List<FlightPack> = parsePacksWithMeta(rawJson, gson, fallbackCities, fallbackAirports).packs
+
+    fun curateCities(plan: FlightPlan, candidates: List<City>, maxCount: Int = MAX_CORRIDOR_CITIES): List<City> {
+        if (candidates.size <= maxCount) return candidates
+        return PlaceLabels.overview(plan, candidates, maxCount)
+    }
+
+    fun normalizeImportedPack(pack: FlightPack, fallbackCities: List<City> = emptyList()): FlightPack {
+        val rawPlan = pack.plan ?: throw IllegalArgumentException("Flight pack is missing flight plan")
+        require(rawPlan.origin.iata.isNotBlank() && rawPlan.destination.iata.isNotBlank()) {
+            "Flight pack is missing origin or destination airport"
+        }
+        require(rawPlan.arrival > rawPlan.departure) {
+            "Flight pack arrival must be after departure"
+        }
+        val enrichedPlan = if (rawPlan.waypoints.isNullOrEmpty() || rawPlan.routeSource == null || rawPlan.routeSource == "GREAT_CIRCLE_ESTIMATE") {
+            TrajectoryCatalog.enrichPlan(rawPlan)
+        } else {
+            rawPlan
+        }
+        val safeCities = (pack.cities as List<City>?).orEmpty().let { existing ->
+            val rawList = if (existing.isEmpty() && fallbackCities.isNotEmpty()) {
+                GreatCircle.corridorCities(enrichedPlan, fallbackCities, 180.0)
+            } else {
+                existing
+            }
+            curateCities(enrichedPlan, rawList, MAX_CORRIDOR_CITIES)
+        }
+        val rawWeather = (pack.weather as Map<String, List<WeatherHour>>?).orEmpty()
+        val sampledCities = WeatherSampling.selectCities(safeCities, MAX_WEATHER_SAMPLES)
+        val safeSampled = pack.effectiveSampledWeatherIds
+            .filter { id -> safeCities.any { it.id == id } }
+            .ifEmpty { sampledCities.map { it.id } }
+
+        // Ensure every sampled city has hourly weather (using approximate solar/climate model if missing)
+        val safeWeather = LinkedHashMap<String, List<WeatherHour>>(rawWeather)
+        for (city in safeCities) {
+            if (city.id in safeSampled) {
+                val existingHours = safeWeather[city.id]
+                val valid = !existingHours.isNullOrEmpty() &&
+                    WeatherParser.nearest(existingHours, enrichedPlan.departure) != null &&
+                    WeatherParser.nearest(existingHours, enrichedPlan.arrival) != null
+                if (!valid) {
+                    safeWeather[city.id] = SolarCalculator.estimateHourlySeries(
+                        city.point,
+                        enrichedPlan.departure,
+                        enrichedPlan.arrival
+                    )
+                }
+            }
+        }
+
+        val safePreparedAt = (pack.preparedAt as Instant?) ?: Instant.now()
+        val summary = pack.mapDetailSummary?.takeIf { it.isNotBlank() && !it.startsWith("Import skeleton") }
+            ?: "Bundled 3D satellite globe & corridor ready offline"
+        return FlightPack(
+            plan = enrichedPlan,
+            cities = safeCities,
+            weather = safeWeather,
+            preparedAt = safePreparedAt,
+            mapReady = true,
+            mapRegionIds = emptyList(),
+            mapDetailSummary = summary,
+            sampledWeatherIds = safeSampled
+        )
+    }
+}
+
 class FlightRepository(private val context: Context) {
     companion object {
         val fileMutex = Mutex()
     }
 
-    val gson: Gson = GsonBuilder()
-        .registerTypeAdapter(Instant::class.java, JsonSerializer<Instant> { src, _, _ -> JsonPrimitive(src.toString()) })
-        .registerTypeAdapter(Instant::class.java, JsonDeserializer { json, _, _ -> Instant.parse(json.asString) })
-        .create()
+    val gson: Gson = FlightPackCodec.createGson()
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
@@ -181,7 +336,8 @@ class FlightRepository(private val context: Context) {
 
     suspend fun corridor(plan: FlightPlan): List<City> = withContext(Dispatchers.Default) {
         val enriched = TrajectoryCatalog.enrichPlan(plan)
-        GreatCircle.corridorCities(enriched, allCities, 180.0)
+        val raw = GreatCircle.corridorCities(enriched, allCities, 180.0)
+        FlightPackCodec.curateCities(enriched, raw, FlightPackCodec.MAX_CORRIDOR_CITIES)
     }
 
     suspend fun readPacks(): List<FlightPack> = withContext(Dispatchers.IO) {
@@ -264,6 +420,61 @@ class FlightRepository(private val context: Context) {
         }
     }
 
+    suspend fun importPacksFromJsonWithMeta(rawJson: String): ImportedFlightPacks = withContext(Dispatchers.IO) {
+        if (allCities.isEmpty() || airports.isEmpty()) {
+            loadData()
+        }
+        val imported = FlightPackCodec.parsePacksWithMeta(rawJson, gson, allCities, airports)
+        for (pack in imported.packs.asReversed()) {
+            save(pack)
+        }
+        imported
+    }
+
+    suspend fun importPacksFromJson(rawJson: String): List<FlightPack> =
+        importPacksFromJsonWithMeta(rawJson).packs
+
+    suspend fun lookupOnlineFlightRoute(
+        flightNumber: String,
+        date: java.time.LocalDate,
+        departureTime: java.time.LocalTime = java.time.LocalTime.of(9, 0)
+    ): TrajectoryCatalog.ResolvedSchedule? = withContext(Dispatchers.IO) {
+        val norm = TrajectoryCatalog.normalizeFlightNumber(flightNumber)
+        if (norm.length < 3) return@withContext null
+        TrajectoryCatalog.lookupSchedule(norm, date)?.let { return@withContext it }
+
+        if (airports.isEmpty()) {
+            runCatching { loadData() }
+        }
+        runCatching {
+            val url = "https://api.adsbdb.com/v0/callsign/$norm"
+            val req = Request.Builder()
+                .url(url)
+                .header("User-Agent", "FlightMapAndroid/0.2 (personal offline flight companion)")
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@runCatching null
+                val body = resp.body?.string() ?: return@runCatching null
+                val root = JsonParser.parseString(body).asJsonObject
+                val flightRoute = root.getAsJsonObject("response")?.getAsJsonObject("flightroute") ?: return@runCatching null
+                val originIata = flightRoute.getAsJsonObject("origin")?.get("iata_code")?.asString?.uppercase() ?: return@runCatching null
+                val destIata = flightRoute.getAsJsonObject("destination")?.get("iata_code")?.asString?.uppercase() ?: return@runCatching null
+                val airlineName = flightRoute.getAsJsonObject("airline")?.get("name")?.asString.orEmpty()
+                val from = airports.firstOrNull { it.iata == originIata } ?: return@runCatching null
+                val to = airports.firstOrNull { it.iata == destIata } ?: return@runCatching null
+                if (from.iata == to.iata) return@runCatching null
+                TrajectoryCatalog.buildScheduleForRoute(
+                    flightNumber = norm,
+                    origin = from,
+                    destination = to,
+                    date = date,
+                    departureTime = departureTime,
+                    airline = airlineName
+                )
+            }
+        }.getOrNull()
+    }
+
     suspend fun deletePack(pack: FlightPack) = withContext(Dispatchers.IO) {
         fileMutex.withLock {
             val current = if (packsFile.exists()) {
@@ -315,8 +526,10 @@ class FlightRepository(private val context: Context) {
         }
     }
 
-    fun selectWeatherSampleCities(cities: List<City>, maxLocations: Int = 180): List<City> =
-        WeatherSampling.selectCities(cities, maxLocations)
+    fun selectWeatherSampleCities(
+        cities: List<City>,
+        maxLocations: Int = FlightPackCodec.MAX_WEATHER_SAMPLES
+    ): List<City> = WeatherSampling.selectCities(cities, maxLocations)
 
     suspend fun weather(
         plan: FlightPlan,
@@ -326,7 +539,7 @@ class FlightRepository(private val context: Context) {
         progress: (Int, Int) -> Unit
     ): Map<String, List<WeatherHour>> = withContext(Dispatchers.IO) {
         if (cities.isEmpty()) return@withContext emptyMap()
-        val sampleCities = selectWeatherSampleCities(cities, 180)
+        val sampleCities = selectWeatherSampleCities(cities, FlightPackCodec.MAX_WEATHER_SAMPLES)
         val result = existingWeather.toMutableMap()
 
         val neededSamples = sampleCities.filter { it.id !in result }
@@ -339,36 +552,45 @@ class FlightRepository(private val context: Context) {
         val end = plan.arrival.atZone(ZoneOffset.UTC).toLocalDate()
         val cacheDir = File(context.filesDir, "weather").apply { mkdirs() }
 
-        for (chunk in neededSamples.chunked(30)) {
-            val lat = chunk.joinToString(",") { it.point.lat.toString() }
-            val lon = chunk.joinToString(",") { it.point.lon.toString() }
-            val url = "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&hourly=temperature_2m,weather_code,is_day&timeformat=unixtime&timezone=UTC&start_date=$start&end_date=$end"
-            val key = java.security.MessageDigest.getInstance("SHA-256").digest(url.toByteArray()).joinToString("") { "%02x".format(it) }
-            val cache = File(cacheDir, "$key.json")
-            val raw = if (cache.exists() && System.currentTimeMillis() - cache.lastModified() < 24 * 3600_000L) {
-                cache.readText()
-            } else {
-                delay(750)
-                val response = client.newCall(
-                    Request.Builder().url(url).header("User-Agent", "FlightMapAndroid/0.2 (personal offline flight companion)").build()
-                ).execute()
-                response.use {
-                    check(it.isSuccessful) { "Weather unavailable (${it.code}). Check connection and forecast date (within 16 days)." }
-                    val body = it.body?.string() ?: error("Empty weather response")
-                    cache.writeText(body)
-                    body
+        for (chunk in neededSamples.chunked(24)) {
+            runCatching {
+                val lat = chunk.joinToString(",") { it.point.lat.toString() }
+                val lon = chunk.joinToString(",") { it.point.lon.toString() }
+                val url = "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&hourly=temperature_2m,weather_code,is_day&timeformat=unixtime&timezone=UTC&start_date=$start&end_date=$end"
+                val key = java.security.MessageDigest.getInstance("SHA-256").digest(url.toByteArray()).joinToString("") { "%02x".format(it) }
+                val cache = File(cacheDir, "$key.json")
+                val raw = if (cache.exists() && System.currentTimeMillis() - cache.lastModified() < 24 * 3600_000L) {
+                    cache.readText()
+                } else {
+                    val response = client.newCall(
+                        Request.Builder().url(url).header("User-Agent", "FlightMapAndroid/0.2 (personal offline flight companion)").build()
+                    ).execute()
+                    response.use {
+                        check(it.isSuccessful) { "Weather HTTP ${it.code}" }
+                        val body = it.body?.string() ?: error("Empty weather response")
+                        cache.writeText(body)
+                        body
+                    }
                 }
-            }
-            val parsed = JsonParser.parseString(raw)
-            val values = if (parsed.isJsonArray) parsed.asJsonArray.toList() else listOf(parsed)
-            check(values.size == chunk.size) { "Incomplete weather response" }
-            chunk.zip(values).forEach { (city, json) ->
-                val hours = WeatherParser.parse(json.toString())
-                check(hours.isNotEmpty()) { "No hourly forecast for ${city.name}" }
-                check(WeatherParser.nearest(hours, plan.departure) != null && WeatherParser.nearest(hours, plan.arrival) != null) {
-                    "Forecast does not cover the flight for ${city.name}"
+                val parsed = JsonParser.parseString(raw)
+                val values = if (parsed.isJsonArray) parsed.asJsonArray.toList() else listOf(parsed)
+                check(values.size == chunk.size) { "Incomplete weather response" }
+                chunk.zip(values).forEach { (city, json) ->
+                    val hours = WeatherParser.parse(json.toString())
+                    if (hours.isNotEmpty() &&
+                        WeatherParser.nearest(hours, plan.departure) != null &&
+                        WeatherParser.nearest(hours, plan.arrival) != null
+                    ) {
+                        result[city.id] = hours
+                    } else {
+                        result[city.id] = SolarCalculator.estimateHourlySeries(city.point, plan.departure, plan.arrival)
+                    }
                 }
-                result[city.id] = hours
+            }.onFailure {
+                // Fast approximate fallback when offline, rate-limited, or beyond 16-day forecast horizon (AC #6)
+                for (city in chunk) {
+                    result[city.id] = SolarCalculator.estimateHourlySeries(city.point, plan.departure, plan.arrival)
+                }
             }
             completedSamples = sampleCities.count { it.id in result }
             progress(completedSamples, totalSamples)

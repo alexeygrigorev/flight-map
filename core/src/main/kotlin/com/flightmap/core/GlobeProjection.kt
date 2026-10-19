@@ -33,10 +33,12 @@ class GlobeProjection(
     val zoom: Double = 1.0,
     val headingRotationDeg: Double = 0.0
 ) {
+    val isPortrait: Boolean = height > width
     // At overview zoom (1.0), radius is large enough that the curved northern horizon arcs
-    // gracefully across the top ~13% of the landscape frame while filling the bottom width.
-    val radius: Float = (maxOf(width, height) * 0.68 * zoom).toFloat()
-    val horizonTopY: Float = (height * 0.138f).coerceAtLeast(48f)
+    // gracefully across the top of the frame while filling the bottom width.
+    val radius: Float = (maxOf(width, height) * (if (isPortrait) 0.56 else 0.68) * zoom).toFloat()
+    // Strictly proportional to height (never pixel-clamped) so raster and vector projections match 1:1 at any resolution.
+    val horizonTopY: Float = height * (if (isPortrait) 0.165f else 0.138f)
     val sphereCenterX: Float = width * 0.50f
     val sphereCenterY: Float = run {
         val overviewCy = horizonTopY + radius
@@ -48,21 +50,21 @@ class GlobeProjection(
         }
     }
 
-    val focusScreenY: Float = height * 0.54f
+    val focusScreenY: Float = height * (if (isPortrait) 0.50f else 0.54f)
 
-    private val lat0 = Math.toRadians(centerLat.coerceIn(-85.0, 85.0))
-    private val lon0 = Math.toRadians(centerLon)
-    private val rotRad = Math.toRadians(headingRotationDeg)
+    val lat0: Double = Math.toRadians(centerLat.coerceIn(-85.0, 85.0))
+    val lon0: Double = Math.toRadians(centerLon)
+    val rotRad: Double = Math.toRadians(headingRotationDeg)
 
     // Pitch rotation around camera X-axis so (centerLat, centerLon) projects to focusScreenY
-    private val pitchRad: Double = asin(((sphereCenterY - focusScreenY) / radius).toDouble().coerceIn(-0.82, 0.82))
+    val pitchRad: Double = asin(((sphereCenterY - focusScreenY) / radius).toDouble().coerceIn(-0.82, 0.82))
 
-    private val sinLat0 = sin(lat0)
-    private val cosLat0 = cos(lat0)
-    private val sinRot = sin(rotRad)
-    private val cosRot = cos(rotRad)
-    private val sinPitch = sin(pitchRad)
-    private val cosPitch = cos(pitchRad)
+    val sinLat0: Double = sin(lat0)
+    val cosLat0: Double = cos(lat0)
+    val sinRot: Double = sin(rotRad)
+    val cosRot: Double = cos(rotRad)
+    val sinPitch: Double = sin(pitchRad)
+    val cosPitch: Double = cos(pitchRad)
 
     /**
      * Projects a geographic (lat, lon) coordinate onto 2D screen coordinates + visibility.

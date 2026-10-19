@@ -219,7 +219,91 @@ object IfeCatalog {
         "ulaanbaatar" to "Capital of Mongolia in the Tuul River valley at 1,350 m elevation.",
         "beijing" to "Capital of China at the northern tip of the North China Plain, framed by the Yan Mountains.",
         "seoul" to "Capital of South Korea along the Han River basin.",
-        "tokyo" to "Capital of Japan fronting Tokyo Bay on the Kanto Plain."
+        "tokyo" to "Capital of Japan fronting Tokyo Bay on the Kanto Plain.",
+        "hangzhou" to "Capital of Zhejiang Province at the southern terminus of the Grand Canal, famed for West Lake.",
+        "nanchang" to "Capital of Jiangxi Province on the Gan River near Poyang Lake.",
+        "changsha" to "Capital of Hunan Province on the lower Xiang River, settled for over 3,000 years.",
+        "changde" to "Historic Hunan city on the Yuan River west of Dongting Lake.",
+        "zhangjiajie" to "Gateway to the UNESCO Wulingyuan quartz-sandstone pillars and Tianmen Mountain in Hunan.",
+        "hengyang" to "Major Hunan railway junction on the Xiang River south of Mount Heng (Nanyue).",
+        "shaoguan" to "Northern gateway city of Guangdong nestled in the Nanling mountain passes.",
+        "guangzhou" to "Millennium-old Maritime Silk Road port and capital of Guangdong on the Pearl River Delta.",
+        "shenzhen" to "Global technology and innovation metropolis bordering Hong Kong on the Pearl River Estuary.",
+        "shantou" to "Historic Chaoshan port city on the eastern coast of Guangdong.",
+        "xiamen" to "Island port city on the Taiwan Strait, known for Gulangyu Island and southern Fujian culture.",
+        "taipei" to "Capital of Taiwan set in the Taipei Basin between the Yangmingshan and Central ranges.",
+        "naha" to "Capital of Okinawa Prefecture on the East China Sea in the Ryukyu Island arc.",
+        "miyazaki" to "Subtropical coastal capital of Miyazaki Prefecture on southeastern Kyushu.",
+        "osaka" to "Historic merchant capital of the Kansai region on Osaka Bay.",
+        "nagoya" to "Industrial and historic heart of the Chūbu region on the Nōbi Plain.",
+        "shizuoka" to "Pacific coast city between Suruga Bay and the southern slopes of Mount Fuji.",
+        "yokohama" to "Major Japanese port city on Tokyo Bay immediately south of Tokyo.",
+        "narita" to "Historic temple town of Chiba Prefecture and international aviation gateway to Greater Tokyo.",
+        "taiyuan" to "Capital of Shanxi Province in the Fen River valley, surrounded by the Loess Plateau.",
+        "samarkand" to "UNESCO Silk Road jewel of Uzbekistan, famed for the Registan and Timurid architecture.",
+        "ashgabat" to "Capital of Turkmenistan between the Karakum Desert and the Kopet Dag mountain range.",
+        "tehran" to "Capital of Iran at the southern foot of the Alborz range beneath Mount Damavand.",
+        "isfahan" to "Historic Persian capital famous for Naqsh-e Jahan Square and Safavid boulevard bridges.",
+        "shiraz" to "City of poets and gardens in the Zagros Mountains of southern Iran, near ancient Persepolis.",
+        "abu dhabi" to "Capital of the United Arab Emirates on a T-shaped island in the southern Persian Gulf.",
+        "dubai" to "Global aviation and commercial hub on the Arabian Gulf coast of the UAE.",
+        "doha" to "Capital of Qatar on the eastern coast of the Qatari Peninsula in the Persian Gulf.",
+        "manama" to "Capital of Bahrain at the crossroads of ancient Dilmun trade routes in the Gulf.",
+        "kuwait city" to "Capital of Kuwait on the southern shore of Kuwait Bay in the northwestern Persian Gulf.",
+        "basra" to "Historic port of Mesopotamia along the Shatt al-Arab waterway.",
+        "baghdad" to "Capital of Iraq along the Tigris River, founded in the 8th century as the Abbasid capital.",
+        "erbil" to "Capital of the Kurdistan Region of Iraq, anchored by a 6,000-year-old inhabited citadel.",
+        "erzurum" to "High-altitude Eastern Anatolian crossroads city of Türkiye at 1,900 meters elevation.",
+        "istanbul" to "Transcontinental metropolis straddling the Bosphorus between the Sea of Marmara and Black Sea.",
+        "sofia" to "Capital of Bulgaria at the foot of Mount Vitosha in the central Balkan peninsula.",
+        "belgrade" to "Capital of Serbia at the confluence of the Sava and Danube rivers.",
+        "budapest" to "Capital of Hungary bisected by the Danube River between Buda hills and the Pest plain.",
+        "vienna" to "Capital of Austria on the Danube at the eastern edge of the Alps.",
+        "prague" to "Capital of the Czech Republic on the Vltava River, 'City of a Hundred Spires'.",
+        "dresden" to "Capital of Saxony in the Elbe River valley, celebrated for Baroque landmarks.",
+        "berlin" to "Capital of Germany on the Spree and Havel rivers in the North European Plain."
+    )
+
+    private val wikidataDescriptions: Map<String, String> = mapOf(
+        "helsinki" to "Capital and largest city of Finland · Gulf of Finland",
+        "tallinn" to "Capital and Hanseatic port of Estonia",
+        "riga" to "Capital and largest city of Latvia · Baltic region",
+        "vilnius" to "Capital of Lithuania · Baroque UNESCO Old Town",
+        "warsaw" to "Capital and largest city of Poland · Vistula River",
+        "bucharest" to "Capital and cultural hub of Romania",
+        "tbilisi" to "Capital of Georgia · Caucasus Silk Road crossroads",
+        "baku" to "Capital of Azerbaijan · Caspian Sea port (-28 m)",
+        "aktau" to "Caspian Sea port city in Mangystau, Kazakhstan",
+        "kyzylorda" to "Syr Darya oasis city in southern Kazakhstan",
+        "shymkent" to "Major southern metropolis of Kazakhstan",
+        "almaty" to "Largest city in Kazakhstan · Tian Shan foothills",
+        "tashkent" to "Capital and largest city of Uzbekistan",
+        "ürümqi" to "Capital of Xinjiang · most inland major city on Earth",
+        "urumqi" to "Capital of Xinjiang · most inland major city on Earth",
+        "turpan" to "Ancient Silk Road oasis in the Turpan Depression",
+        "hami" to "Eastern Xinjiang oasis between Tian Shan & Gobi",
+        "dunhuang" to "Silk Road oasis · UNESCO Mogao Caves",
+        "lanzhou" to "Capital of Gansu Province · upper Yellow River",
+        "xi'an" to "Capital of Shaanxi · ancient Chang'an & Silk Road start",
+        "xian" to "Capital of Shaanxi · ancient Chang'an & Silk Road start",
+        "nanjing" to "Capital of Jiangsu · historic Six Dynasties capital",
+        "suzhou" to "Historic canal and classical garden city of Jiangsu",
+        "shanghai" to "Direct-administered municipality & financial hub of China",
+        "hangzhou" to "Capital of Zhejiang · West Lake & Grand Canal",
+        "changsha" to "Capital of Hunan Province · Xiang River",
+        "zhangjiajie" to "Prefecture-level city in Hunan · Wulingyuan karst peaks",
+        "guangzhou" to "Capital of Guangdong · Pearl River Delta metropolis",
+        "xiamen" to "Coastal sub-provincial city on the Taiwan Strait",
+        "naha" to "Capital of Okinawa Prefecture · Ryukyu Islands",
+        "tokyo" to "Capital and largest metropolis of Japan",
+        "abu dhabi" to "Capital of the United Arab Emirates · Persian Gulf",
+        "dubai" to "Most populous city in the United Arab Emirates",
+        "tehran" to "Capital and largest city of Iran · Alborz foothills",
+        "baghdad" to "Capital of Iraq · historic Tigris metropolis",
+        "istanbul" to "Transcontinental city across the Bosphorus, Türkiye",
+        "budapest" to "Capital and largest city of Hungary · Danube River",
+        "prague" to "Capital of the Czech Republic · Bohemia",
+        "berlin" to "Capital and largest city of Germany"
     )
 
     private val countryNames: Map<String, String> = mapOf(
@@ -245,12 +329,17 @@ object IfeCatalog {
         "KG" to "Kyrgyzstan",
         "TJ" to "Tajikistan",
         "CN" to "China",
+        "TW" to "Taiwan",
+        "HK" to "Hong Kong",
         "MN" to "Mongolia",
         "RU" to "Russia",
         "SE" to "Sweden",
         "NO" to "Norway",
         "DK" to "Denmark",
         "DE" to "Germany",
+        "AT" to "Austria",
+        "CZ" to "Czechia",
+        "RS" to "Serbia",
         "GB" to "United Kingdom",
         "FR" to "France",
         "IT" to "Italy",
@@ -258,6 +347,12 @@ object IfeCatalog {
         "CY" to "Cyprus",
         "IR" to "Iran",
         "IQ" to "Iraq",
+        "KW" to "Kuwait",
+        "BH" to "Bahrain",
+        "QA" to "Qatar",
+        "AE" to "United Arab Emirates",
+        "SA" to "Saudi Arabia",
+        "OM" to "Oman",
         "AF" to "Afghanistan",
         "PK" to "Pakistan",
         "IN" to "India",
@@ -269,6 +364,47 @@ object IfeCatalog {
 
     fun countryDisplayName(isoOrName: String): String =
         countryNames[isoOrName.uppercase().trim()] ?: isoOrName
+
+    data class WikidataCityCard(
+        val name: String,
+        val country: String,
+        val description: String,
+        val populationLabel: String,
+        val coordinatesLabel: String,
+        val timezoneLabel: String,
+        val summaryFact: String
+    )
+
+    fun wikidataCard(city: City): WikidataCityCard {
+        val key = city.name.lowercase().trim()
+        val countryFull = countryDisplayName(city.country)
+        val desc = wikidataDescriptions[key] ?: run {
+            val tier = when {
+                city.population >= 5_000_000 -> "Megacity"
+                city.population >= 1_000_000 -> "Metropolitan city"
+                city.population >= 250_000 -> "Regional city"
+                city.population >= 50_000 -> "Urban center"
+                else -> "Municipality"
+            }
+            "$tier in $countryFull"
+        }
+        val popLabel = if (city.population > 0) "%,d".format(city.population) else "—"
+        val latDir = if (city.point.lat >= 0) "N" else "S"
+        val lonDir = if (city.point.lon >= 0) "E" else "W"
+        val coords = "%.2f°%s, %.2f°%s".format(
+            kotlin.math.abs(city.point.lat), latDir,
+            kotlin.math.abs(city.point.lon), lonDir
+        )
+        return WikidataCityCard(
+            name = city.name,
+            country = countryFull,
+            description = desc,
+            populationLabel = popLabel,
+            coordinatesLabel = coords,
+            timezoneLabel = city.timezone.replace("_", " "),
+            summaryFact = cityFact(city)
+        )
+    }
 
     /**
      * Returns an offline cultural/geographic fact for any overflown city.
@@ -298,3 +434,4 @@ object IfeCatalog {
         return "$popDesc in $countryFull ($regionName time zone · $coords)."
     }
 }
+

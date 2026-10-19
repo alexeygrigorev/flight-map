@@ -200,50 +200,14 @@ fun IfeGlobeView(
         picked.values.toList()
     }
 
-    var globeBitmap by remember { mutableStateOf<Bitmap?>(null) }
-
-    val rasterKey = remember(
-        viewportSize.width,
-        viewportSize.height,
-        (cameraState.cameraLat * 10).roundToInt(),
-        (cameraState.cameraLon * 10).roundToInt(),
-        (cameraState.zoom * 20).roundToInt(),
-        (effectiveRotation * 2).roundToInt(),
-        (subsolar.lat * 2).roundToInt(),
-        (subsolar.lon * 2).roundToInt()
-    ) {
-        arrayOf(
-            viewportSize.width,
-            viewportSize.height,
-            (cameraState.cameraLat * 10).roundToInt(),
-            (cameraState.cameraLon * 10).roundToInt(),
-            (cameraState.zoom * 20).roundToInt(),
-            (effectiveRotation * 2).roundToInt(),
-            (subsolar.lat * 2).roundToInt(),
-            (subsolar.lon * 2).roundToInt()
-        ).contentHashCode()
-    }
-
-    LaunchedEffect(rasterKey) {
-        if (viewportSize.width <= 0 || viewportSize.height <= 0) return@LaunchedEffect
-        val rendered = withContext(Dispatchers.Default) {
-            val reliefPixels = EarthReliefCache.ensureLoaded(context)
-            val texW = EarthReliefCache.width
-            val texH = EarthReliefCache.height
-            render3DGlobeRaster(
-                viewWidth = viewportSize.width,
-                viewHeight = viewportSize.height,
-                centerLat = cameraState.cameraLat,
-                centerLon = cameraState.cameraLon,
-                zoom = cameraState.zoom,
-                headingRotationDeg = effectiveRotation,
-                subsolar = subsolar,
-                reliefPixels = reliefPixels,
-                texW = texW,
-                texH = texH
-            )
+    var reliefReady by remember { mutableStateOf(EarthReliefCache.width > 0) }
+    LaunchedEffect(Unit) {
+        if (!reliefReady) {
+            withContext(Dispatchers.IO) {
+                EarthReliefCache.ensureLoaded(context)
+            }
+            reliefReady = EarthReliefCache.width > 0
         }
-        globeBitmap = rendered
     }
 
     val projection = remember(
@@ -263,6 +227,24 @@ fun IfeGlobeView(
         )
     }
 
+    // Render the 3D globe raster synchronously in lockstep with `projection` using parallel CPU workers
+    // so vector borders, route lines, and satellite relief NEVER lag or drift apart during pan/zoom.
+    val globeBitmap = remember(
+        projection,
+        (subsolar.lat * 4).roundToInt(),
+        (subsolar.lon * 4).roundToInt(),
+        reliefReady
+    ) {
+        val reliefPixels = if (reliefReady) EarthReliefCache.ensureLoaded(context) else null
+        render3DGlobeRaster(
+            proj = projection,
+            subsolar = subsolar,
+            reliefPixels = reliefPixels,
+            texW = EarthReliefCache.width,
+            texH = EarthReliefCache.height
+        )
+    }
+
     val sceneLayout = remember(projection, pack.plan, progress.point, displayCities, countries) {
         GlobeLabelPlanner.plan(
             proj = projection,
@@ -273,7 +255,7 @@ fun IfeGlobeView(
             cities = displayCities,
             countries = countries,
             topSafePx = 68f,
-            bottomSafePx = 88f
+            bottomSafePx = if (projection.isPortrait) 136f else 88f
         )
     }
 
@@ -286,7 +268,7 @@ fun IfeGlobeView(
         modifier = modifier
             .fillMaxSize()
             .onSizeChanged { if (it.width > 0 && it.height > 0) viewportSize = it }
-            .pointerInput(cameraState.zoom) {
+            .pointerInput(Unit) {
                 detectDragGestures { change, dragAmount ->
                     change.consume()
                     cameraState.followPlane = false
@@ -353,123 +335,210 @@ fun IfeGlobeView(
                 val w = size.width
                 val h = size.height
 
-                // 1. 3D raycast satellite globe + atmospheric limb bitmap
-                val bmp = globeBitmap
-                if (bmp != null) {
-                    val dstRect = RectF(0f, 0f, w, h)
-                    val bmpPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
-                    canvas.drawBitmap(bmp, null, dstRect, bmpPaint)
-                } else {
-                    canvas.drawColor(android.graphics.Color.rgb(4, 12, 28))
-                }
+                // 1. 3D raycast satellite globe + atmospheric limb bitmap (rendered with identical `projection`)
+                val dstRect = RectF(0f, 0f, w, h)
+                val bmpPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+                canvas.drawBitmap(globeBitmap, null, dstRect, bmpPaint)
 
-                // 2. Subtle country borders on the 3D sphere
+                // 2. Native full-DPI anti-aliased atmospheric horizon limb ring (eliminates any upscale staircase blocks)
+                drawNativeHorizonLimb(canvas, projection)
+
+                // 3. Subtle country borders clipped strictly to the 3D sphere disc
                 drawCountryBorders(canvas, projection, countries)
 
-                // 3. Solar day/night terminator curve
+                // 4. Solar day/night terminator curve
                 drawSolarTerminator(canvas, projection, subsolar)
 
-                // 4. Planned/filed trajectory ribbon (flown trail + remaining airway + endpoint markers)
+                // 5. Planned/filed trajectory ribbon (flown trail + remaining airway + endpoint markers)
                 drawTrajectoryRibbon(canvas, projection, pack.plan, progress, sceneLayout.endpoints)
 
-                // 5. Decluttered, collision-free country names, mountain peaks, cities, and landmark pins
+                // 6. Decluttered, collision-free country names, mountain peaks, cities, and landmark pins
                 drawPlannedCountries(canvas, sceneLayout.countries)
                 drawPlannedPeaks(canvas, sceneLayout.peaks)
                 drawPlannedCities(canvas, sceneLayout.cities)
                 drawPlannedPins(canvas, sceneLayout.pins)
 
-                // 6. 3D swept-wing white aircraft icon at current position
+                // 7. 3D swept-wing white aircraft icon at current position
                 drawAircraftIcon(canvas, projection, progress)
             }
         }
     }
 }
 
+private fun drawNativeHorizonLimb(canvas: Canvas, proj: GlobeProjection) {
+    val outerGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.argb(68, 92, 188, 255)
+        style = Paint.Style.STROKE
+        strokeWidth = 6.0f
+    }
+    val innerRimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.argb(145, 168, 224, 255)
+        style = Paint.Style.STROKE
+        strokeWidth = 2.0f
+    }
+    canvas.drawCircle(proj.sphereCenterX, proj.sphereCenterY, proj.radius + 1.5f, outerGlowPaint)
+    canvas.drawCircle(proj.sphereCenterX, proj.sphereCenterY, proj.radius, innerRimPaint)
+}
+
 /**
- * Raycasts the 3D globe into an offscreen bitmap buffer with:
- * - Outer space & deterministic stars above the curved Earth limb
- * - Glowing blue atmospheric horizon halo (matching flight-map-ref-ife.jpg)
- * - Equirectangular NASA Blue Marble satellite relief + bathymetry sampling
- * - Solar day/night illumination & twilight transition
+ * Fast polynomial approximation of asin(x) in degrees, max error < 0.004°.
+ */
+private fun fastAsinDeg(x: Double): Double {
+    val neg = x < 0.0
+    val ax = if (neg) -x else x
+    val clamped = if (ax > 1.0) 1.0 else ax
+    val poly = ((-0.0187293 * clamped + 0.0742610) * clamped - 0.2121144) * clamped + 1.5707288
+    val rad = 1.5707963267948966 - sqrt(1.0 - clamped) * poly
+    val deg = rad * 57.29577951308232
+    return if (neg) -deg else deg
+}
+
+/**
+ * Fast atan2(y, x) in degrees, max error < 0.005°.
+ */
+private fun fastAtan2Deg(y: Double, x: Double): Double {
+    if (x == 0.0 && y == 0.0) return 0.0
+    val ay = abs(y)
+    val ax = abs(x)
+    val swap = ay > ax
+    val z = if (swap) ax / ay else ay / ax
+    val z2 = z * z
+    val a = ((0.0776509570923569 * z2 - 0.287434475393028) * z2 + 0.995181681698119) * z
+    var rad = if (swap) (1.5707963267948966 - a) else a
+    if (x < 0.0) rad = 3.141592653589793 - rad
+    if (y < 0.0) rad = -rad
+    return rad * 57.29577951308232
+}
+
+/**
+ * Raycasts the 3D globe into an offscreen bitmap buffer using the EXACT screen [proj]
+ * (eliminating any aspect-ratio or horizonTopY mismatch), bilinear texture filtering,
+ * smooth anti-aliased horizon blending, and parallel multi-core row execution.
  */
 private fun render3DGlobeRaster(
-    viewWidth: Int,
-    viewHeight: Int,
-    centerLat: Double,
-    centerLon: Double,
-    zoom: Double,
-    headingRotationDeg: Double,
+    proj: GlobeProjection,
     subsolar: GeoPoint,
     reliefPixels: IntArray?,
     texW: Int,
     texH: Int
 ): Bitmap {
-    val targetW = 520
-    val targetH = ((viewHeight.toDouble() / viewWidth.toDouble()) * targetW).toInt().coerceIn(220, 520)
-    val proj = GlobeProjection(
-        width = targetW.toFloat(),
-        height = targetH.toFloat(),
-        centerLat = centerLat,
-        centerLon = centerLon,
-        zoom = zoom,
-        headingRotationDeg = headingRotationDeg
-    )
+    val isPortrait = proj.isPortrait
+    val targetW = if (isPortrait) 540 else 820
+    val targetH = ((proj.height.toDouble() / proj.width.toDouble()) * targetW).roundToInt().coerceIn(320, 860)
 
     val outPixels = IntArray(targetW * targetH)
-    val cx = proj.sphereCenterX
-    val cy = proj.sphereCenterY
-    val r = proj.radius
+    val cx = proj.sphereCenterX.toDouble()
+    val cy = proj.sphereCenterY.toDouble()
+    val r = proj.radius.toDouble()
+    val invR = 1.0 / r
+    val scaleX = proj.width.toDouble() / targetW.toDouble()
+    val scaleY = proj.height.toDouble() / targetH.toDouble()
+
+    // Anti-aliasing band width in normalized radius units (~1.8 raster pixels)
+    val aaBand = (1.8 * maxOf(scaleX, scaleY)) * invR
+    val rInner = (1.0 - aaBand).coerceAtLeast(0.92)
+    val rInnerSq = rInner * rInner
+
+    val sinLat0 = proj.sinLat0
+    val cosLat0 = proj.cosLat0
+    val sinRot = proj.sinRot
+    val cosRot = proj.cosRot
+    val sinPitch = proj.sinPitch
+    val cosPitch = proj.cosPitch
+    val centerLon = proj.centerLon
 
     val sunLatRad = Math.toRadians(subsolar.lat)
     val sunLonRad = Math.toRadians(subsolar.lon)
     val sinSunLat = sin(sunLatRad)
     val cosSunLat = cos(sunLatRad)
+    val dSunLon = sunLonRad - proj.lon0
+    val cosDSunLon = cos(dSunLon)
+    val sinDSunLon = sin(dSunLon)
 
-    for (py in 0 until targetH) {
+    val haloInvWidth = proj.zoom.coerceAtLeast(0.8) / 0.095
+
+    java.util.stream.IntStream.range(0, targetH).parallel().forEach { py ->
         val rowOffset = py * targetW
-        val dy = (cy - py) / r
+        val sy = (py + 0.5) * scaleY
+        val y2 = (cy - sy) * invR
+        val y2Sq = y2 * y2
+
         for (px in 0 until targetW) {
-            val dx = (px - cx) / r
-            val rSq = dx * dx + dy * dy
+            val sx = (px + 0.5) * scaleX
+            val x2 = (sx - cx) * invR
+            val rSq = x2 * x2 + y2Sq
 
-            if (rSq > 1.0f) {
-                val distFromLimb = sqrt(rSq.toDouble()) - 1.0
-                val haloWidth = 0.095 / zoom.coerceAtLeast(0.8)
-                val glow = exp(-distFromLimb / haloWidth).coerceIn(0.0, 1.0)
-                val glowSq = glow * glow
+            if (rSq >= 1.0) {
+                val distFromLimb = sqrt(rSq) - 1.0
+                val glow = exp(-distFromLimb * haloInvWidth).coerceIn(0.0, 1.0)
+                val glow2 = glow * glow
+                val glow4 = glow2 * glow2
+                val glow5 = glow4 * glow
 
-                val spaceR = (3 + 42 * glowSq + 110 * glow.pow(5.0)).toInt().coerceIn(0, 255)
-                val spaceG = (8 + 115 * glowSq + 140 * glow.pow(4.0)).toInt().coerceIn(0, 255)
-                val spaceB = (22 + 215 * glow + 35 * glowSq).toInt().coerceIn(0, 255)
+                val spaceR = (3.0 + 42.0 * glow2 + 110.0 * glow5).toInt().coerceIn(0, 255)
+                val spaceG = (8.0 + 115.0 * glow2 + 140.0 * glow4).toInt().coerceIn(0, 255)
+                val spaceB = (22.0 + 215.0 * glow + 35.0 * glow2).toInt().coerceIn(0, 255)
                 var color = (0xFF shl 24) or (spaceR shl 16) or (spaceG shl 8) or spaceB
 
                 if (glow < 0.28) {
                     val hash = ((px * 73856093) xor (py * 19349663)) and 0x7FFFFFFF
-                    if (hash % 397 == 0) {
+                    if (hash % 499 == 0) {
                         val starBright = 150 + (hash % 95)
                         color = (0xFF shl 24) or (starBright shl 16) or (starBright shl 8) or (starBright + 10).coerceAtMost(255)
                     }
                 }
                 outPixels[rowOffset + px] = color
             } else {
-                val unproj = proj.unproject(px.toFloat(), py.toFloat())
-                if (unproj == null) {
-                    outPixels[rowOffset + px] = (0xFF shl 24) or (4 shl 16) or (12 shl 8) or 28
-                    continue
-                }
-                val (lat, lon, zDepth) = unproj
+                val z2 = sqrt(1.0 - rSq)
+
+                // Undo X-axis pitch rotation
+                val y1 = y2 * cosPitch - z2 * sinPitch
+                val z1 = y2 * sinPitch + z2 * cosPitch
+
+                // Undo Z-axis heading rotation
+                val xEast = x2 * cosRot + y1 * sinRot
+                val yNorth = -x2 * sinRot + y1 * cosRot
+
+                val sinPhi = (z1 * sinLat0 + yNorth * cosLat0).coerceIn(-1.0, 1.0)
+                val cosPhiCosDLon = z1 * cosLat0 - yNorth * sinLat0
+
+                val lat = fastAsinDeg(sinPhi)
+                var lon = centerLon + fastAtan2Deg(xEast, cosPhiCosDLon)
+                if (lon > 180.0) lon -= 360.0 else if (lon < -180.0) lon += 360.0
 
                 var baseR = 12
                 var baseG = 58
                 var baseB = 122
 
-                if (reliefPixels != null && texW > 0 && texH > 0) {
-                    val u = (((lon + 180.0) / 360.0) * (texW - 1)).toInt().coerceIn(0, texW - 1)
-                    val v = (((90.0 - lat) / 180.0) * (texH - 1)).toInt().coerceIn(0, texH - 1)
-                    val argb = reliefPixels[v * texW + u]
-                    baseR = (argb shr 16) and 0xFF
-                    baseG = (argb shr 8) and 0xFF
-                    baseB = argb and 0xFF
+                if (reliefPixels != null && texW > 1 && texH > 1) {
+                    // Bilinear texture interpolation for smooth, non-blocky terrain when zoomed in
+                    val uf = (((lon + 180.0) * (1.0 / 360.0)) * (texW - 1)).coerceIn(0.0, (texW - 1).toDouble())
+                    val vf = (((90.0 - lat) * (1.0 / 180.0)) * (texH - 1)).coerceIn(0.0, (texH - 1).toDouble())
+                    val u0 = uf.toInt().coerceIn(0, texW - 2)
+                    val v0 = vf.toInt().coerceIn(0, texH - 2)
+                    val fu = ((uf - u0) * 256.0).toInt().coerceIn(0, 256)
+                    val fv = ((vf - v0) * 256.0).toInt().coerceIn(0, 256)
+                    val invFu = 256 - fu
+                    val invFv = 256 - fv
+
+                    val row0 = v0 * texW + u0
+                    val row1 = row0 + texW
+                    val c00 = reliefPixels[row0]
+                    val c10 = reliefPixels[row0 + 1]
+                    val c01 = reliefPixels[row1]
+                    val c11 = reliefPixels[row1 + 1]
+
+                    val w00 = invFu * invFv
+                    val w10 = fu * invFv
+                    val w01 = invFu * fv
+                    val w11 = fu * fv
+
+                    baseR = (((c00 shr 16 and 0xFF) * w00 + (c10 shr 16 and 0xFF) * w10 +
+                        (c01 shr 16 and 0xFF) * w01 + (c11 shr 16 and 0xFF) * w11) shr 16)
+                    baseG = (((c00 shr 8 and 0xFF) * w00 + (c10 shr 8 and 0xFF) * w10 +
+                        (c01 shr 8 and 0xFF) * w01 + (c11 shr 8 and 0xFF) * w11) shr 16)
+                    baseB = (((c00 and 0xFF) * w00 + (c10 and 0xFF) * w10 +
+                        (c01 and 0xFF) * w01 + (c11 and 0xFF) * w11) shr 16)
 
                     if (baseB > baseR + 18 && baseB > baseG + 10) {
                         baseR = (baseR * 0.85 + 8).toInt().coerceIn(6, 55)
@@ -482,29 +551,42 @@ private fun render3DGlobeRaster(
                     }
                 }
 
-                val latRad = Math.toRadians(lat)
-                val lonRad = Math.toRadians(lon)
-                val sunDot = sin(latRad) * sinSunLat + cos(latRad) * cosSunLat * cos(lonRad - sunLonRad)
+                // Direct 3D dot product with subsolar vector (no per-pixel trig!)
+                val sunDot = sinPhi * sinSunLat + cosSunLat * (cosPhiCosDLon * cosDSunLon + xEast * sinDSunLon)
 
                 val solarFactor = when {
                     sunDot >= 0.08 -> 1.0
                     sunDot <= -0.14 -> 0.56
                     else -> {
-                        val t = ((sunDot + 0.14) / 0.22).coerceIn(0.0, 1.0)
+                        val t = ((sunDot + 0.14) * (1.0 / 0.22)).coerceIn(0.0, 1.0)
                         0.56 + 0.44 * (t * t * (3.0 - 2.0 * t))
                     }
                 }
 
-                val limbShade = 0.78 + 0.22 * zDepth.pow(0.42)
-                val atmoScatter = (1.0 - zDepth).pow(2.6).coerceIn(0.0, 1.0) * 0.58
+                val sqrtZ = sqrt(z2)
+                val limbShade = 0.78 + 0.22 * sqrtZ
+                val omz = 1.0 - z2
+                val atmoScatter = (omz * omz * sqrt(omz)).coerceIn(0.0, 1.0) * 0.58
 
                 var finalR = (baseR * solarFactor * limbShade * (1.0 - atmoScatter) + 45.0 * atmoScatter).toInt()
                 var finalG = (baseG * solarFactor * limbShade * (1.0 - atmoScatter) + 135.0 * atmoScatter).toInt()
                 var finalB = (baseB * solarFactor * limbShade * (1.0 - atmoScatter) + 245.0 * atmoScatter).toInt()
 
                 if (sunDot < -0.02) {
-                    val nightBlend = ((-sunDot - 0.02) / 0.35).coerceIn(0.0, 0.25)
+                    val nightBlend = ((-sunDot - 0.02) * (1.0 / 0.35)).coerceIn(0.0, 0.25)
                     finalB = (finalB * (1.0 - nightBlend) + (finalB + 28) * nightBlend).toInt()
+                }
+
+                // Smooth sub-pixel anti-aliasing across the horizon limb [rInner..1.0]
+                if (rSq > rInnerSq) {
+                    val rNorm = sqrt(rSq)
+                    val edgeT = ((rNorm - rInner) / (1.0 - rInner)).coerceIn(0.0, 1.0)
+                    val rimR = 155
+                    val rimG = 225
+                    val rimB = 255
+                    finalR = (finalR * (1.0 - edgeT) + rimR * edgeT).toInt()
+                    finalG = (finalG * (1.0 - edgeT) + rimG * edgeT).toInt()
+                    finalB = (finalB * (1.0 - edgeT) + rimB * edgeT).toInt()
                 }
 
                 finalR = finalR.coerceIn(0, 255)
@@ -525,12 +607,18 @@ private fun drawCountryBorders(
     countries: List<CountryBoundary>
 ) {
     val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = android.graphics.Color.argb(110, 226, 234, 248)
+        color = android.graphics.Color.argb(105, 226, 234, 248)
         style = Paint.Style.STROKE
         strokeWidth = 1.0f
         strokeJoin = Paint.Join.ROUND
     }
+    canvas.save()
+    val clipDisc = Path().apply {
+        addCircle(proj.sphereCenterX, proj.sphereCenterY, proj.radius - 1.5f, Path.Direction.CW)
+    }
+    canvas.clipPath(clipDisc)
     val path = Path()
+    val maxSegmentPx = proj.radius * 0.14f
     for (country in countries) {
         for (ring in country.rings) {
             path.reset()
@@ -539,8 +627,8 @@ private fun drawCountryBorders(
             var prevY = 0f
             for (pt in ring) {
                 val p = proj.project(pt)
-                if (p.visible && p.z > 0.06) {
-                    if (!penDown || hypot((p.x - prevX).toDouble(), (p.y - prevY).toDouble()) > proj.radius * 0.25f) {
+                if (p.visible && p.z > 0.08) {
+                    if (!penDown || hypot((p.x - prevX).toDouble(), (p.y - prevY).toDouble()) > maxSegmentPx) {
                         path.moveTo(p.x, p.y)
                         penDown = true
                     } else {
@@ -557,6 +645,7 @@ private fun drawCountryBorders(
             }
         }
     }
+    canvas.restore()
 }
 
 private fun drawSolarTerminator(
