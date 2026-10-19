@@ -147,4 +147,19 @@ class WeatherParserTest {
         val resJustBeyond = WeatherParser.nearest(hours, t0.plusSeconds(5401))
         assertNull(resJustBeyond)
     }
+
+    @Test
+    fun testConditionTextAndSymbol() {
+        assertEquals("Clear", WeatherParser.conditionText(0))
+        assertEquals("Partly cloudy", WeatherParser.conditionText(1))
+        assertEquals("Overcast", WeatherParser.conditionText(3))
+        assertEquals("Rain", WeatherParser.conditionText(63))
+        assertEquals("Snow", WeatherParser.conditionText(73))
+        assertEquals("Thunderstorm", WeatherParser.conditionText(95))
+
+        assertEquals("☀", WeatherParser.conditionSymbol(0, isDay = true))
+        assertEquals("☾", WeatherParser.conditionSymbol(0, isDay = false))
+        assertEquals("🌧", WeatherParser.conditionSymbol(63))
+        assertEquals("❄", WeatherParser.conditionSymbol(73))
+    }
 }

@@ -271,14 +271,30 @@ private fun FlightScreen(vm: FlightViewModel) {
                 }
                 HorizontalDivider(color = Color(0xFF30424F))
                 Row(Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val relativeDir = if (nearest != null) GreatCircle.relativeBearingDescription(progress.point, progress.heading, nearest.point) else ""
                     Column(Modifier.weight(1f)) {
-                        Text(if(nearestDistance != null && nearestDistance <= 80) "Passing near · ${nearestDistance.roundToInt()} km" else "Nearest corridor city${nearestDistance?.let { " · ${it.roundToInt()} km" } ?: ""}", color = Muted, fontSize = 11.sp)
+                        Text(
+                            if (nearestDistance != null && nearestDistance <= 80)
+                                "Passing near · ${nearestDistance.roundToInt()} km · $relativeDir"
+                            else
+                                "Nearest corridor city${nearestDistance?.let { " · ${it.roundToInt()} km · $relativeDir" } ?: ""}",
+                            color = Muted,
+                            fontSize = 11.sp
+                        )
                         Text(nearest?.name ?: "Open skies", fontSize = 22.sp, fontWeight = FontWeight.Medium, maxLines = 1)
-                        Text(nearest?.let { "LOCAL TIME  ${time.atZone(ZoneId.of(it.timezone)).format(DateTimeFormatter.ofPattern("HH:mm"))}" } ?: "No cities in this corridor", color = Muted, letterSpacing = 1.sp, fontSize = 10.sp, modifier = Modifier.padding(top = 4.dp))
+                        Text(
+                            nearest?.let {
+                                "LOCAL TIME  ${time.atZone(ZoneId.of(it.timezone)).format(DateTimeFormatter.ofPattern("HH:mm"))} (${it.timezone})"
+                            } ?: "No cities in this corridor",
+                            color = Muted,
+                            letterSpacing = 1.sp,
+                            fontSize = 10.sp,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
                     }
                     Column(horizontalAlignment = Alignment.End) {
                         Text(weather?.let { "${it.temperature.roundToInt()}°" } ?: "—", fontSize = 30.sp, color = Cream)
-                        Text(weather?.let { weatherText(it.code) } ?: "No saved forecast", color = Muted, fontSize = 11.sp)
+                        Text(weather?.let { WeatherParser.conditionText(it.code) } ?: "No saved forecast", color = Muted, fontSize = 11.sp)
                         if (weather != null && weatherLocation?.id != nearest?.id) Text("near ${weatherLocation?.name}", color = Muted, fontSize = 10.sp)
                     }
                 }
@@ -293,8 +309,30 @@ private fun FlightScreen(vm: FlightViewModel) {
                     if(vm.previewFraction != null) TextButton(onClick = { vm.previewFraction = null }) { Text("Use current time", fontSize = 11.sp) }
                 }
                 if (previewOpen) {
-                    Text("Preview · simulated time ${time.atZone(ZoneId.of(plan.origin.timezone)).format(DateTimeFormatter.ofPattern("d MMM HH:mm"))}", color = Amber, fontSize = 11.sp)
-                    Slider(value = vm.previewFraction ?: progress.fraction.toFloat(), onValueChange = { vm.previewFraction = it }, modifier = Modifier.fillMaxWidth())
+                    var isPlaying by remember { mutableStateOf(false) }
+                    LaunchedEffect(isPlaying) {
+                        while (isPlaying) {
+                            kotlinx.coroutines.delay(100)
+                            val current = vm.previewFraction ?: progress.fraction.toFloat()
+                            if (current >= 1.0f) {
+                                isPlaying = false
+                            } else {
+                                vm.previewFraction = (current + 0.003f).coerceAtMost(1.0f)
+                            }
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Preview · simulated time ${time.atZone(ZoneId.of(plan.origin.timezone)).format(DateTimeFormatter.ofPattern("d MMM HH:mm"))}", color = Amber, fontSize = 11.sp)
+                        TextButton(onClick = {
+                            if (vm.previewFraction != null && vm.previewFraction!! >= 1.0f) {
+                                vm.previewFraction = 0f
+                            }
+                            isPlaying = !isPlaying
+                        }, contentPadding = PaddingValues(0.dp)) {
+                            Text(if (isPlaying) "⏸ Pause" else "▶ Play", fontSize = 11.sp, color = Mint)
+                        }
+                    }
+                    Slider(value = vm.previewFraction ?: progress.fraction.toFloat(), onValueChange = { isPlaying = false; vm.previewFraction = it }, modifier = Modifier.fillMaxWidth())
                 }
             }
         }
@@ -308,13 +346,21 @@ private fun FlightScreen(vm: FlightViewModel) {
             }
             items(pack.cities.filter { citySearch.isBlank() || it.name.contains(citySearch, true) || it.country.contains(citySearch, true) }, key = { it.id }) { city ->
                 val forecast = WeatherParser.nearest(pack.weather[city.id].orEmpty(), time)
+                val cityDist = GreatCircle.distanceKm(progress.point, city.point).roundToInt()
+                val relativeDir = GreatCircle.relativeBearingDescription(progress.point, progress.heading, city.point)
                 Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) { Text(city.name, fontSize = 16.sp); Text("${city.country} · ${city.timezone}", color = Muted, fontSize = 11.sp) }
-                    Column(horizontalAlignment = Alignment.End) { Text(time.atZone(ZoneId.of(city.timezone)).format(DateTimeFormatter.ofPattern("HH:mm")), color = Mint); Text(forecast?.let { "${it.temperature.roundToInt()}° · ${weatherText(it.code)}" } ?: "Forecast unavailable", color = Muted, fontSize = 11.sp) }
+                    Column(Modifier.weight(1f)) {
+                        Text(city.name, fontSize = 16.sp)
+                        Text("${city.country} · %,d km (${relativeDir.substringBefore(" ·")})".format(cityDist), color = Muted, fontSize = 11.sp)
+                    }
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(time.atZone(ZoneId.of(city.timezone)).format(DateTimeFormatter.ofPattern("HH:mm")), color = Mint)
+                        Text(forecast?.let { "${it.temperature.roundToInt()}° · ${WeatherParser.conditionText(it.code)}" } ?: "Forecast unavailable", color = Muted, fontSize = 11.sp)
+                    }
                 }
                 HorizontalDivider(color = Panel)
             }
         }
     }
 }
-private fun weatherText(code: Int) = when(code) { 0 -> "Clear"; 1,2 -> "Partly cloudy"; 3 -> "Overcast"; 45,48 -> "Fog"; in 51..57 -> "Drizzle"; in 61..67 -> "Rain"; in 71..77 -> "Snow"; in 80..82 -> "Showers"; 85,86 -> "Snow showers"; in 95..99 -> "Thunderstorm"; else -> "Forecast" }
+private fun weatherText(code: Int) = WeatherParser.conditionText(code)

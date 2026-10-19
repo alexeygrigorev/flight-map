@@ -119,7 +119,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
-        viewModelScope.launch { while (isActive) { now = Instant.now(); delay(1000) } }
+        viewModelScope.launch { while (isActive) { now = Instant.now(); delay(250) } }
     }
 
     private fun syncPack() {

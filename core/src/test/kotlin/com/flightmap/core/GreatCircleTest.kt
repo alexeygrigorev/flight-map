@@ -225,4 +225,26 @@ class GreatCircleTest {
         assertTrue(result.contains(nearCity))
         assertFalse(result.contains(farCity))
     }
+
+    @Test
+    fun testRelativeBearingDescription() {
+        val plane = GeoPoint(0.0, 0.0)
+        val planeHeadingEast = 90.0
+
+        val targetAhead = GeoPoint(0.0, 5.0) // East -> ahead
+        val aheadDesc = GreatCircle.relativeBearingDescription(plane, planeHeadingEast, targetAhead)
+        assertTrue(aheadDesc.contains("Dead ahead"))
+
+        val targetRight = GeoPoint(-5.0, 0.0) // South -> 90 deg right
+        val rightDesc = GreatCircle.relativeBearingDescription(plane, planeHeadingEast, targetRight)
+        assertTrue(rightDesc.contains("Off right wing") && rightDesc.contains("3 o'clock"))
+
+        val targetLeft = GeoPoint(5.0, 0.0) // North -> 90 deg left
+        val leftDesc = GreatCircle.relativeBearingDescription(plane, planeHeadingEast, targetLeft)
+        assertTrue(leftDesc.contains("Off left wing") && leftDesc.contains("9 o'clock"))
+
+        val targetBehind = GeoPoint(0.0, -5.0) // West -> directly behind
+        val behindDesc = GreatCircle.relativeBearingDescription(plane, planeHeadingEast, targetBehind)
+        assertTrue(behindDesc.contains("Directly behind"))
+    }
 }

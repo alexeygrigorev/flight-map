@@ -296,31 +296,33 @@ class OfflineMaps(context: Context) {
         }
 
     suspend fun verify(ids: List<Long>): Boolean = withContext(Dispatchers.Main.immediate) {
-        suspendCancellableCoroutine { continuation ->
-            if (ids.isEmpty()) { continuation.resume(false); return@suspendCancellableCoroutine }
-            manager.listOfflineRegions(object : OfflineManager.ListOfflineRegionsCallback {
-                override fun onError(error: String) { if (continuation.isActive) continuation.resume(false) }
-                override fun onList(offlineRegions: Array<OfflineRegion>?) {
-                    val regions = offlineRegions.orEmpty().filter { it.id in ids }
-                    if (regions.size != ids.size) { if (continuation.isActive) continuation.resume(false); return }
-                    var pending = regions.size
-                    var complete = true
-                    regions.forEach { region ->
-                        region.getStatus(object : OfflineRegion.OfflineRegionStatusCallback {
-                            override fun onError(error: String?) { complete = false; finish() }
-                            override fun onStatus(status: OfflineRegionStatus?) {
-                                complete = complete && status?.isComplete == true
-                                finish()
-                            }
-                            fun finish() {
-                                pending--
-                                if (pending == 0 && continuation.isActive) continuation.resume(complete)
-                            }
-                        })
+        if (ids.isEmpty()) return@withContext false
+        kotlinx.coroutines.withTimeoutOrNull(10_000L) {
+            suspendCancellableCoroutine { continuation ->
+                manager.listOfflineRegions(object : OfflineManager.ListOfflineRegionsCallback {
+                    override fun onError(error: String) { if (continuation.isActive) continuation.resume(false) }
+                    override fun onList(offlineRegions: Array<OfflineRegion>?) {
+                        val regions = offlineRegions.orEmpty().filter { it.id in ids }
+                        if (regions.size != ids.size) { if (continuation.isActive) continuation.resume(false); return }
+                        var pending = regions.size
+                        var complete = true
+                        regions.forEach { region ->
+                            region.getStatus(object : OfflineRegion.OfflineRegionStatusCallback {
+                                override fun onError(error: String?) { complete = false; finish() }
+                                override fun onStatus(status: OfflineRegionStatus?) {
+                                    complete = complete && status?.isComplete == true
+                                    finish()
+                                }
+                                fun finish() {
+                                    pending--
+                                    if (pending == 0 && continuation.isActive) continuation.resume(complete)
+                                }
+                            })
+                        }
                     }
-                }
-            })
-        }
+                })
+            }
+        } ?: false
     }
 
     fun discard(ids: List<Long>) {

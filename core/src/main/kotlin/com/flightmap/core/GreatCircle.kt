@@ -68,6 +68,22 @@ object GreatCircle {
     }
 
     /**
+     * Describes the relative bearing of a target point relative to the aircraft's current
+     * heading and position, suitable for window-seat passengers (e.g. "Off left wing · 10 o'clock").
+     */
+    fun relativeBearingDescription(planePoint: GeoPoint, planeHeading: Double, targetPoint: GeoPoint): String {
+        val bearing = heading(planePoint, targetPoint)
+        val relAngle = ((bearing - planeHeading) % 360.0 + 360.0) % 360.0
+        val clock = (((relAngle + 15.0) / 30.0).toInt() % 12).let { if (it == 0) 12 else it }
+        return when {
+            relAngle in 345.0..360.0 || relAngle in 0.0..15.0 -> "Dead ahead · 12 o'clock"
+            relAngle in 165.0..195.0 -> "Directly behind · 6 o'clock"
+            relAngle in 15.0..165.0 -> "Off right wing · $clock o'clock"
+            else -> "Off left wing · $clock o'clock"
+        }
+    }
+
+    /**
      * Interpolates along the great-circle arc from a to b by fraction [0.0, 1.0] using spherical
      * linear interpolation (slerp) on 3D Cartesian unit vectors.
      * Robust against date-line crossing, polar crossing, coincident, and antipodal endpoints.
