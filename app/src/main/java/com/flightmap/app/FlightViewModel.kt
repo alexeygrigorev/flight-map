@@ -173,7 +173,16 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 val jsonText = withContext(Dispatchers.IO) {
                     val app = getApplication<Application>()
                     if (uri.scheme == "file") {
-                        java.io.File(uri.path ?: error("Invalid file path")).readText()
+                        val f = java.io.File(uri.path ?: error("Invalid file path"))
+                        runCatching { f.readText() }.getOrElse { e ->
+                            val fallbackExt = java.io.File(app.getExternalFilesDir(null), f.name)
+                            val fallbackInt = java.io.File(app.filesDir, f.name)
+                            when {
+                                fallbackExt.exists() && fallbackExt.canRead() -> fallbackExt.readText()
+                                fallbackInt.exists() && fallbackInt.canRead() -> fallbackInt.readText()
+                                else -> throw e
+                            }
+                        }
                     } else {
                         app.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
                             ?: error("Could not read selected file")

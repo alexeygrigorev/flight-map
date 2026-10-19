@@ -72,8 +72,11 @@ private val colors = darkColorScheme(
 )
 
 class MainActivity : ComponentActivity() {
+    private var pendingIntent by mutableStateOf<android.content.Intent?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        pendingIntent = intent
         MapLibre.getInstance(this)
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
@@ -83,16 +86,19 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme(colorScheme = colors) {
                 val vm: FlightViewModel = viewModel()
-                LaunchedEffect(intent, vm.loaded) {
-                    if (!vm.loaded) return@LaunchedEffect
-                    val dataUri = intent?.data
-                    val extraPath = intent?.getStringExtra("import_pack_path")
+                val activeIntent = pendingIntent
+                LaunchedEffect(activeIntent, vm.loaded) {
+                    if (!vm.loaded || activeIntent == null) return@LaunchedEffect
+                    val dataUri = activeIntent.data
+                    val extraPath = activeIntent.getStringExtra("import_pack_path")
                     if (dataUri != null) {
                         vm.importPackFromUri(dataUri)
-                        intent?.data = null
+                        activeIntent.data = null
+                        pendingIntent = null
                     } else if (!extraPath.isNullOrBlank()) {
                         vm.importPackFromUri(android.net.Uri.fromFile(java.io.File(extraPath)))
-                        intent?.removeExtra("import_pack_path")
+                        activeIntent.removeExtra("import_pack_path")
+                        pendingIntent = null
                     }
                 }
                 Surface(Modifier.fillMaxSize(), color = Ink) {
@@ -100,6 +106,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingIntent = intent
     }
 }
 
@@ -597,16 +609,17 @@ private fun PrepareScreen(vm: FlightViewModel) {
                     }
                 },
                 enabled = vm.loaded && !vm.busy,
+                contentPadding = PaddingValues(horizontal = 10.dp),
                 modifier = Modifier
-                    .weight(1f)
+                    .weight(0.95f)
                     .height(46.dp)
                     .semantics { contentDescription = "Simulate flight" },
                 shape = RoundedCornerShape(14.dp),
                 border = BorderStroke(1.dp, Amber.copy(alpha = 0.6f))
             ) {
-                Icon(Icons.Outlined.PlayArrow, null, Modifier.size(18.dp), tint = Amber)
-                Spacer(Modifier.width(6.dp))
-                Text("Simulate flight", color = Amber, fontSize = 13.sp, maxLines = 1)
+                Icon(Icons.Outlined.PlayArrow, null, Modifier.size(17.dp), tint = Amber)
+                Spacer(Modifier.width(5.dp))
+                Text("Simulate flight", color = Amber, fontSize = 12.sp, maxLines = 1)
             }
 
             OutlinedButton(
@@ -614,16 +627,17 @@ private fun PrepareScreen(vm: FlightViewModel) {
                     packFilePicker.launch(arrayOf("application/json", "application/octet-stream", "*/*"))
                 },
                 enabled = vm.loaded && !vm.busy,
+                contentPadding = PaddingValues(horizontal = 10.dp),
                 modifier = Modifier
-                    .weight(1.15f)
+                    .weight(1.2f)
                     .height(46.dp)
                     .semantics { contentDescription = "Load prepared file" },
                 shape = RoundedCornerShape(14.dp),
                 border = BorderStroke(1.dp, Mint.copy(alpha = 0.55f))
             ) {
-                Icon(Icons.Outlined.FileOpen, null, Modifier.size(18.dp), tint = Mint)
-                Spacer(Modifier.width(6.dp))
-                Text("Load .flightpack.json", color = Mint, fontSize = 13.sp, maxLines = 1)
+                Icon(Icons.Outlined.FileOpen, null, Modifier.size(17.dp), tint = Mint)
+                Spacer(Modifier.width(5.dp))
+                Text("Load .flightpack.json", color = Mint, fontSize = 12.sp, maxLines = 1)
             }
         }
 
@@ -1562,15 +1576,28 @@ private fun WikidataFeatureCard(
         }.getOrNull()
     }
 
+    val telemetryLine = buildString {
+        if (populationBadge != null) {
+            append(populationBadge)
+            append("  ·  ")
+        }
+        append("$bearingDesc ($distKm km)")
+        if (localClock != null) {
+            append("  ·  Local $localClock")
+        }
+        if (weather != null) {
+            append("  ·  ${weather.temperature.roundToInt()}°C ${WeatherParser.conditionText(weather.code)}")
+        }
+    }
+
     Column(Modifier.fillMaxWidth()) {
         Row(
             Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-            Text(countryTag, color = Mint, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
-            Text("·", color = Muted, fontSize = 11.sp)
+            Text(title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(countryTag, color = Mint, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
             Text(
                 wikidataSubtitle,
                 color = Color(0xFF93C5FD),
@@ -1617,31 +1644,14 @@ private fun WikidataFeatureCard(
                 )
             }
         }
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(top = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            if (populationBadge != null) {
-                Text(populationBadge, color = Cream, fontSize = 10.5.sp, fontWeight = FontWeight.Medium)
-                Text("·", color = Muted, fontSize = 10.5.sp)
-            }
-            Text("$bearingDesc ($distKm km)", color = Amber, fontSize = 10.5.sp)
-            if (localClock != null) {
-                Text("·", color = Muted, fontSize = 10.5.sp)
-                Text("Local $localClock", color = Color(0xFFDBEAFE), fontSize = 10.5.sp)
-            }
-            if (weather != null) {
-                Text("·", color = Muted, fontSize = 10.5.sp)
-                Text(
-                    "${weather.temperature.roundToInt()}°C ${WeatherParser.conditionText(weather.code)}",
-                    color = Color.White,
-                    fontSize = 10.5.sp
-                )
-            }
-        }
+        Text(
+            telemetryLine,
+            color = Amber,
+            fontSize = 10.5.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 2.dp)
+        )
         Text(
             fact,
             color = Color(0xFFCBD5E1),
