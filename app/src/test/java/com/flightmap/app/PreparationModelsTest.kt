@@ -278,7 +278,7 @@ class PreparationModelsTest {
     @Test
     fun testEnrichedTrajectoryPackSerialization() {
         val enriched = TrajectoryCatalog.enrichPlan(plan)
-        assertTrue(enriched.isRealTrajectory)
+        assertFalse(enriched.isRealTrajectory)
         assertTrue(enriched.effectiveWaypoints.size >= 30)
 
         val pack = FlightPack(
@@ -291,7 +291,7 @@ class PreparationModelsTest {
         val json = gson.toJson(pack)
         val restored = gson.fromJson(json, FlightPack::class.java)
 
-        assertTrue(restored.plan.isRealTrajectory)
+        assertFalse(restored.plan.isRealTrajectory)
         assertEquals(enriched.effectiveWaypoints.size, restored.plan.effectiveWaypoints.size)
         assertTrue(restored.plan.effectiveRouteLabel.contains("Southern Eurasian Corridor"))
     }
@@ -330,7 +330,7 @@ class PreparationModelsTest {
         assertEquals("PVG", imported.plan.destination.iata)
         assertEquals(resolvedPlan.departure, imported.plan.departure)
         assertEquals(resolvedPlan.arrival, imported.plan.arrival)
-        assertTrue(imported.plan.isRealTrajectory)
+        assertFalse(imported.plan.isRealTrajectory)
         assertEquals(36, imported.plan.effectiveWaypoints.size)
         assertEquals(2, imported.cities.size)
         assertTrue(imported.forecastsReady)
@@ -365,7 +365,7 @@ class PreparationModelsTest {
         val imported = FlightPackCodec.parsePacks(rawUnenrichedJson, gson, fallbackCities)
         assertEquals(1, imported.size)
         val pack = imported.single()
-        assertTrue(pack.plan.isRealTrajectory)
+        assertFalse(pack.plan.isRealTrajectory)
         assertEquals(36, pack.plan.effectiveWaypoints.size)
         assertEquals(listOf("Warsaw"), pack.cities.map { it.name })
         assertTrue(pack.mapReady)
@@ -422,10 +422,10 @@ class PreparationModelsTest {
         assertEquals(2, imported.packs.size)
         assertEquals("MU689", imported.packs[0].plan.number)
         assertEquals(Instant.parse("2026-10-20T02:00:00Z"), imported.packs[0].plan.departure)
-        assertTrue(imported.packs[0].plan.isRealTrajectory)
+        assertFalse(imported.packs[0].plan.isRealTrajectory)
         assertTrue(imported.packs[0].forecastsReady)
         assertEquals("CZ3382", imported.packs[1].plan.number)
-        assertTrue(imported.packs[1].plan.isRealTrajectory)
+        assertFalse(imported.packs[1].plan.isRealTrajectory)
     }
 }
 

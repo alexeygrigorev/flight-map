@@ -6,12 +6,17 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.flightmap.core.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.maplibre.android.MapLibre
 import java.time.*
 
 class FlightViewModel(application: Application) : AndroidViewModel(application) {
     val repository = FlightRepository(application)
     private val maps = OfflineMaps(application)
+    private val timingEdits = Mutex()
+    var monitoringPlan by mutableStateOf<FlightPlan?>(null); private set
+    var timingBusy by mutableStateOf(false); private set
 
     var loaded by mutableStateOf(false); private set
     var packs by mutableStateOf<List<FlightPack>>(emptyList()); private set
@@ -29,7 +34,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     var mapReady by mutableStateOf(false); private set
     var screen by mutableStateOf("prepare"); private set
     var previewFraction by mutableStateOf<Float?>(null)
-    /** Takeoff-play clock: Play anchors wall-now to departure; scrub + return-to-current. */
+    /** Simulation-only clock. The real flight and notification always use wall time. */
     var livePlay by mutableStateOf<LivePlayClock?>(null); private set
     var simulationSpeed by mutableIntStateOf(1); private set
     var isLandscapeIfe by mutableStateOf(true); private set
@@ -141,7 +146,11 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
-        viewModelScope.launch { while (isActive) { now = Instant.now(); delay(250) } }
+        viewModelScope.launch { while (isActive) {
+            now = Instant.now()
+            monitoringPlan = FlightNotificationService.monitoredPlan(getApplication())
+            delay(1000)
+        } }
     }
 
     private fun syncPack() {
@@ -243,6 +252,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun deletePack(target: FlightPack) {
+        if (monitoringPlan?.let { isSameFlight(it, target.plan) } == true) stopFlightNotification()
         viewModelScope.launch {
             runCatching { CorridorTiles(getApplication<Application>()).deletePlan(target.plan) }
             repository.deletePack(target)
@@ -378,32 +388,25 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun fly() {
-        val currentPack = pack ?: return
-        if (busy) return
-        val currentNow = Instant.now()
-        // Outside the real window: open ready for takeoff-play (clock starts when Play is pressed).
-        // Inside the real window: follow wall clock until the user presses Play / scrubs.
+        if (pack == null || busy) return
+        // Real flight always follows wall time. Only the explicitly labelled simulation anchors a clock.
         previewFraction = null
         livePlay = null
         simulationSpeed = 1
-        if (currentNow < currentPack.plan.departure || currentNow > currentPack.plan.arrival) {
-            // Leave clock idle at scheduled takeoff until Play; scrub still works via startLivePlay/scrub.
-            previewFraction = 0f
-        }
         MapLibre.setConnected(false)
         screen = "flight"
     }
 
     /** Press Play at takeoff: anchor wall-now to departure and advance 1:1 (or at simulationSpeed). */
     fun startLivePlay(speedMultiplier: Int = simulationSpeed) {
-        val plan = pack?.plan ?: return
+        val plan = simulationPlan() ?: return
         simulationSpeed = speedMultiplier.coerceIn(1, 600)
-        livePlay = LivePlayClock.start(plan, Instant.now())
+        livePlay = LivePlayClock(Instant.now(), FlightTiming.effectiveDeparture(plan), FlightTiming.estimatedArrival(plan))
         previewFraction = null
     }
 
     fun setSimSpeed(multiplier: Int) {
-        val currentFrac = pack?.plan?.let { p ->
+        val currentFrac = simulationPlan()?.let { p ->
             FlightTiming.progress(p, effectiveNow()).fraction.toFloat()
         } ?: 0f
         simulationSpeed = multiplier.coerceIn(1, 600)
@@ -417,22 +420,23 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
      * and the clock continues from there toward arrival.
      */
     fun resumeLivePlayFromFraction(fraction: Float) {
-        val plan = pack?.plan ?: return
+        val plan = simulationPlan() ?: return
         val clamped = fraction.coerceIn(0f, 1f).toDouble()
-        val total = Duration.between(plan.departure, plan.arrival).toMillis()
+        val end = FlightTiming.estimatedArrival(plan)
+        val total = Duration.between(plan.departure, end).toMillis()
         val scrubInstant = plan.departure.plusMillis((total * clamped).toLong())
         val elapsedFlightMs = Duration.between(plan.departure, scrubInstant).toMillis()
         val scaledWallElapsedMs = (elapsedFlightMs / simulationSpeed.coerceAtLeast(1).toLong())
         livePlay = LivePlayClock(
             wallStartedAt = Instant.now().minusMillis(scaledWallElapsedMs),
             departure = plan.departure,
-            arrival = plan.arrival
+            arrival = end
         )
         previewFraction = null
     }
 
     fun pauseLivePlayKeepPosition() {
-        val plan = pack?.plan ?: return
+        val plan = simulationPlan() ?: return
         val frac = FlightTiming.progress(plan, effectiveNow()).fraction.toFloat()
         livePlay = null
         previewFraction = frac
@@ -474,8 +478,58 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         MapLibre.setConnected(true)
     }
 
+    fun openNotifiedFlight(number: String, departure: String) {
+        val selected = packs.firstOrNull { it.plan.number == number && it.plan.departure.toString() == departure } ?: return
+        selectPack(selected)
+        fly()
+    }
+
+    fun enableFlightNotification() {
+        val plan = pack?.plan ?: return
+        runCatching { FlightNotificationService.start(getApplication(), plan) }
+            .onSuccess { monitoringPlan = plan }
+            .onFailure { error = "Could not enable flight card: ${it.message}" }
+    }
+
+    fun stopFlightNotification() {
+        FlightNotificationService.stop(getApplication())
+        monitoringPlan = null
+    }
+
+    fun clearError() { error = null }
+
+    fun setActualTakeoff(instant: Instant) = updateTiming { it.copy(actualTakeoff = instant, landedAt = null) }
+    fun delayTakeoff() = updateTiming { it.copy(actualTakeoff = (it.actualTakeoff ?: it.departure).plusSeconds(1800), landedAt = null) }
+    fun markLanded() = updateTiming { it.copy(landedAt = Instant.now()) }
+
+    private fun updateTiming(transform: (FlightPlan) -> FlightPlan) {
+        val target = pack?.plan ?: return
+        if (timingBusy) return
+        timingBusy = true
+        viewModelScope.launch {
+            try {
+                timingEdits.withLock {
+                    val latest = repository.readPacks().firstOrNull { isSameFlight(it.plan, target) }
+                        ?: throw IllegalStateException("Flight pack no longer exists")
+                    val changed = latest.copy(plan = transform(latest.plan))
+                    repository.save(changed)
+                    packs = repository.readPacks()
+                    // An asynchronous save must never switch a different selected flight.
+                    if (pack?.let { isSameFlight(it.plan, target) } == true) {
+                        pack = packs.firstOrNull { isSameFlight(it.plan, target) } ?: changed
+                        stopLivePlay()
+                    }
+                }
+            } catch (failure: Exception) {
+                error = "Could not save flight timing: ${failure.message}"
+            } finally { timingBusy = false }
+        }
+    }
+
+    private fun simulationPlan(): FlightPlan? = pack?.plan?.copy(actualTakeoff = null, landedAt = null)
+
     fun effectiveNow(): Instant {
-        val plan = pack?.plan
+        val plan = simulationPlan()
         val clock = livePlay
         if (plan != null && clock != null) {
             if (clock.isScrubbing || simulationSpeed <= 1) {
@@ -491,8 +545,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         }
         if (plan != null) {
             previewFraction?.let { frac ->
-                val total = Duration.between(plan.departure, plan.arrival).toMillis()
-                return plan.departure.plusMillis((total * frac).toLong())
+                return FlightTiming.timeAtFraction(plan, frac.toDouble())
             }
         }
         return now

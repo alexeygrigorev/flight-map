@@ -3,9 +3,10 @@ package com.flightmap.app
 import android.content.pm.ActivityInfo
 import android.os.Bundle
 import android.view.WindowManager
-import android.widget.SeekBar
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -36,7 +37,6 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -89,6 +89,13 @@ class MainActivity : ComponentActivity() {
                 val activeIntent = pendingIntent
                 LaunchedEffect(activeIntent, vm.loaded) {
                     if (!vm.loaded || activeIntent == null) return@LaunchedEffect
+                    val notifiedNumber = activeIntent.getStringExtra("open_flight_number")
+                    if (notifiedNumber != null) {
+                        vm.openNotifiedFlight(notifiedNumber, activeIntent.getStringExtra("open_flight_departure").orEmpty())
+                        activeIntent.removeExtra("open_flight_number")
+                        pendingIntent = null
+                        return@LaunchedEffect
+                    }
                     val dataUri = activeIntent.data
                     val extraPath = activeIntent.getStringExtra("import_pack_path")
                     if (dataUri != null) {
@@ -792,7 +799,11 @@ private fun AirportInput(
 @Composable
 private fun FlightScreen(vm: FlightViewModel) {
     val rawPack = vm.pack ?: return
-    val plan = remember(rawPack.plan) { TrajectoryCatalog.enrichPlan(rawPack.plan) }
+    val simulation = vm.livePlay != null || vm.previewFraction != null
+    val plan = remember(rawPack.plan, simulation) {
+        val enriched = TrajectoryCatalog.enrichPlan(rawPack.plan)
+        if (simulation) enriched.copy(actualTakeoff = null, landedAt = null) else enriched
+    }
     val pack = remember(rawPack, plan) {
         if (rawPack.plan.waypoints == plan.waypoints) rawPack else rawPack.copy(plan = plan)
     }
@@ -860,26 +871,8 @@ private fun FlightScreen(vm: FlightViewModel) {
     val solarIsDay = remember(progress.point, time.epochSecond / 60) {
         SolarCalculator.isDaylight(progress.point, time)
     }
-    val tailWindText = remember(progress.point, progress.heading) {
-        SolarCalculator.estimateCruiseWindLabel(progress.point, progress.heading)
-    }
-
-    var previewOpen by remember { mutableStateOf(vm.livePlay != null) }
-    var isPlaying by remember { mutableStateOf(vm.livePlay != null && !vm.livePlay!!.isScrubbing) }
-
-    LaunchedEffect(vm.livePlay) {
-        if (vm.livePlay != null) {
-            previewOpen = true
-            isPlaying = !vm.livePlay!!.isScrubbing
-        }
-    }
-
-    // Live-play advances via wall clock in ViewModel; stop Play UI when flight ends.
-    LaunchedEffect(isPlaying, vm.livePlay, progress.fraction) {
-        if (isPlaying && vm.livePlay != null && progress.fraction >= 1.0) {
-            isPlaying = false
-        }
-    }
+    var controlsOpen by remember { mutableStateOf(false) }
+    var simulationOpen by remember { mutableStateOf(false) }
 
     BackHandler { vm.edit() }
 
@@ -898,150 +891,18 @@ private fun FlightScreen(vm: FlightViewModel) {
             countries = vm.repository.countries,
             allCities = vm.repository.allCities,
             cameraState = cameraState,
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.fillMaxSize(),
+            flightTime = time
         )
 
-        // 2. Top Route Progress Header + Orientation Switch Button (Landscape <-> Portrait)
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .align(Alignment.TopCenter)
-                .background(
-                    Brush.verticalGradient(
-                        listOf(
-                            Color(0xCC040812),
-                            Color(0x66060B18),
-                            Color.Transparent
-                        )
-                    )
-                )
-                .statusBarsPadding()
-                .padding(horizontal = 14.dp, vertical = 7.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Surface(
-                onClick = { vm.edit() },
-                color = Color(0x9916203A),
-                shape = CircleShape,
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.20f)),
-                modifier = Modifier.size(32.dp)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        Icons.AutoMirrored.Outlined.ArrowBack,
-                        contentDescription = "Edit flight",
-                        tint = Color.White,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-            }
-
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(horizontal = 10.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier
-                        .widthIn(max = 520.dp)
-                        .fillMaxWidth()
-                ) {
-                    Text(
-                        originCityName,
-                        color = Color.White,
-                        fontSize = 12.5.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1
-                    )
-                    IfeHeaderProgressBar(
-                        fraction = progress.fraction.toFloat(),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(18.dp)
-                    )
-                    Text(
-                        destCityName,
-                        color = Color.White,
-                        fontSize = 12.5.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1
-                    )
-                }
-                Text(
-                    "${plan.number}  ·  ${tailWindText.substringBefore(" |")}  ·  %,d km left  ·  %dh %02dm  ·  ETA %s".format(
-                        progress.remainingKm.roundToInt(),
-                        progress.remaining.toHours(),
-                        progress.remaining.toMinutes() % 60,
-                        plan.arrival.atZone(ZoneId.of(plan.destination.timezone))
-                            .format(DateTimeFormatter.ofPattern("HH:mm"))
-                    ),
-                    color = Color(0xFFBAC8DC),
-                    fontSize = 9.5.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Orientation Toggle Button (Switch between Horizontal Landscape and Vertical Portrait - AC #20)
-                Surface(
-                    onClick = { vm.toggleOrientation() },
-                    color = Color(0x9916203A),
-                    shape = RoundedCornerShape(16.dp),
-                    border = BorderStroke(1.dp, Mint.copy(alpha = 0.45f)),
-                    modifier = Modifier
-                        .height(32.dp)
-                        .semantics {
-                            contentDescription = if (isLandscape) "Switch to portrait" else "Switch to landscape"
-                        }
-                ) {
-                    Row(
-                        Modifier.padding(horizontal = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(
-                            Icons.Outlined.ScreenRotation,
-                            contentDescription = null,
-                            tint = Mint,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Text(
-                            if (isLandscape) "Portrait" else "Landscape",
-                            color = Mint,
-                            fontSize = 10.5.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-                }
-
-                Surface(
-                    onClick = {
-                        previewOpen = !previewOpen
-                    },
-                    color = if (previewOpen) IfeIndigoBright else Color(0x9916203A),
-                    shape = CircleShape,
-                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.20f)),
-                    modifier = Modifier.size(32.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                            contentDescription = "Takeoff Play & Scrubber",
-                            tint = Color.White,
-                            modifier = Modifier.size(17.dp)
-                        )
-                    }
-                }
-            }
-        }
+        RouteFlightHeader(
+            plan = plan, progress = progress, time = time,
+            originName = originCityName, destinationName = destCityName,
+            simulation = simulation, isLandscape = isLandscape,
+            onBack = { vm.edit() }, onControls = { controlsOpen = true },
+            onOrientation = { vm.toggleOrientation() },
+            modifier = Modifier.align(Alignment.TopCenter)
+        )
 
         // 3. Attribution (always above the dock) + discreet floating bottom panel.
         // The pill rides directly on top of the panel, so it stays legible and
@@ -1078,54 +939,16 @@ private fun FlightScreen(vm: FlightViewModel) {
             solarIsDay = solarIsDay,
             cameraState = cameraState,
             isLandscape = isLandscape,
-            previewOpen = previewOpen,
-            isPlaying = isPlaying,
-            isLiveAnchored = vm.livePlay != null,
-            simulationSpeed = vm.simulationSpeed,
-            previewFraction = vm.previewFraction,
-            onTogglePreview = {
-                previewOpen = !previewOpen
-            },
-            onTogglePlay = {
-                if (isPlaying) {
-                    vm.pauseLivePlayKeepPosition()
-                    isPlaying = false
-                } else {
-                    val scrub = vm.livePlay?.scrubFraction
-                    if (scrub != null) {
-                        vm.resumeLivePlayFromFraction(scrub.toFloat())
-                    } else if (vm.previewFraction != null && vm.livePlay == null) {
-                        vm.resumeLivePlayFromFraction(vm.previewFraction!!)
-                    } else {
-                        vm.startLivePlay()
-                    }
-                    isPlaying = true
-                    previewOpen = true
-                }
-            },
-            onToggleSimSpeed = {
-                val nextSpeed = if (vm.simulationSpeed > 1) 1 else 60
-                vm.setSimSpeed(nextSpeed)
-                if (!isPlaying) {
-                    vm.startLivePlay(nextSpeed)
-                    isPlaying = true
-                    previewOpen = true
-                }
-            },
-            onScrub = { value ->
-                isPlaying = false
-                vm.scrubTo(value)
-                previewOpen = true
-            },
-            onResetTime = {
-                val wasLive = vm.livePlay != null
-                vm.returnToCurrentPosition()
-                isPlaying = wasLive && vm.livePlay != null
-            },
+            onTogglePreview = { controlsOpen = true },
             modifier = Modifier.fillMaxWidth()
         )
     }
     }
+    if (controlsOpen) FlightControlsDialog(vm, onDismiss = { controlsOpen = false }, onSimulation = {
+        controlsOpen = false
+        simulationOpen = true
+    })
+    if (simulationOpen) SimulationDialog(vm) { simulationOpen = false }
 }
 
 /**
@@ -1134,7 +957,7 @@ private fun FlightScreen(vm: FlightViewModel) {
  *   city (or peak/pin) marker on the map; dismissible via X, map background tap, or
  *   Route reset (AC #16). Never auto-opened: no nearest-city card on initial load,
  *   timeline scrubbing, Play/Sim, or Plane-follow.
- * - Takeoff Play clock, 1×/60× simulation toggle, scrubber, and always-available "Return to now" (AC #13, #15)
+ * - Flight controls open in a dialog, leaving the map free of a time-scrubbing row.
  * - Current overflown place, local clock, day/night, weather & camera controls
  */
 @Composable
@@ -1148,16 +971,7 @@ private fun DiscreetIfePanel(
     solarIsDay: Boolean,
     cameraState: GlobeCameraState,
     isLandscape: Boolean,
-    previewOpen: Boolean,
-    isPlaying: Boolean,
-    isLiveAnchored: Boolean,
-    simulationSpeed: Int,
-    previewFraction: Float?,
     onTogglePreview: () -> Unit,
-    onTogglePlay: () -> Unit,
-    onToggleSimSpeed: () -> Unit,
-    onScrub: (Float) -> Unit,
-    onResetTime: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val timeFormatter = remember { DateTimeFormatter.ofPattern("HH:mm") }
@@ -1196,104 +1010,6 @@ private fun DiscreetIfePanel(
                 HorizontalDivider(
                     color = Color.White.copy(alpha = 0.10f),
                     modifier = Modifier.padding(vertical = 5.dp)
-                )
-            }
-
-            // 2. Takeoff Play / Simulation / Scrubber + Always-available "Return to now" row (AC #13 & #15)
-            if (previewOpen) {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Text(
-                        "${
-                            time.atZone(ZoneId.of(pack.plan.origin.timezone))
-                                .format(DateTimeFormatter.ofPattern("HH:mm"))
-                        } (${(progress.fraction * 100).roundToInt()}%)",
-                        color = Amber,
-                        fontSize = 10.5.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Surface(
-                        onClick = onTogglePlay,
-                        color = if (isPlaying) Mint.copy(alpha = 0.22f) else Color(0xFF152642),
-                        shape = RoundedCornerShape(10.dp),
-                        border = BorderStroke(1.dp, Mint.copy(alpha = 0.5f)),
-                        modifier = Modifier.height(24.dp)
-                    ) {
-                        Box(Modifier.padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
-                            Text(
-                                if (isPlaying) "⏸ Pause" else if (isLiveAnchored) "▶ Resume" else "▶ Takeoff Play",
-                                fontSize = 10.5.sp,
-                                color = Mint,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                    }
-                    Surface(
-                        onClick = onToggleSimSpeed,
-                        color = if (simulationSpeed > 1.0) Amber.copy(alpha = 0.22f) else Color(0xFF152642),
-                        shape = RoundedCornerShape(10.dp),
-                        border = BorderStroke(1.dp, if (simulationSpeed > 1.0) Amber else Color.White.copy(alpha = 0.2f)),
-                        modifier = Modifier
-                            .height(24.dp)
-                            .semantics { contentDescription = "Toggle simulation speed" }
-                    ) {
-                        Box(Modifier.padding(horizontal = 7.dp), contentAlignment = Alignment.Center) {
-                            Text(
-                                if (simulationSpeed > 1.0) "60× Sim" else "1× Live",
-                                fontSize = 10.sp,
-                                color = if (simulationSpeed > 1.0) Amber else Cream,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                    }
-                    Surface(
-                        onClick = onResetTime,
-                        color = Color(0xFF152642),
-                        shape = RoundedCornerShape(10.dp),
-                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.22f)),
-                        modifier = Modifier
-                            .height(24.dp)
-                            .semantics { contentDescription = "Return to current position" }
-                    ) {
-                        Box(Modifier.padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
-                            Text("Return to now", fontSize = 10.sp, color = Cream)
-                        }
-                    }
-                    val sliderValue = ((previewFraction ?: progress.fraction.toFloat()) * 1000f)
-                        .roundToInt()
-                        .coerceIn(0, 1000)
-                    AndroidView(
-                        factory = { ctx ->
-                            SeekBar(ctx).apply {
-                                max = 1000
-                                contentDescription = "Preview journey scrubber"
-                                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                                    override fun onProgressChanged(seekBar: SeekBar?, value: Int, fromUser: Boolean) {
-                                        if (fromUser) {
-                                            onScrub((value / 1000f).coerceIn(0f, 1f))
-                                        }
-                                    }
-                                    override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-                                    override fun onStopTrackingTouch(seekBar: SeekBar?) {}
-                                })
-                            }
-                        },
-                        update = { seekBar ->
-                            if (seekBar.progress != sliderValue) {
-                                seekBar.progress = sliderValue
-                            }
-                        },
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(22.dp)
-                    )
-                }
-                HorizontalDivider(
-                    color = Color.White.copy(alpha = 0.10f),
-                    modifier = Modifier.padding(vertical = 4.dp)
                 )
             }
 
@@ -1347,15 +1063,15 @@ private fun DiscreetIfePanel(
                 ) {
                     Surface(
                         onClick = onTogglePreview,
-                        color = if (previewOpen) IfeIndigoBright else Color(0xFF132038),
+                        color = Color(0xFF132038),
                         shape = RoundedCornerShape(14.dp),
                         border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
                         modifier = Modifier.height(28.dp)
                     ) {
                         Box(Modifier.padding(horizontal = 9.dp), contentAlignment = Alignment.Center) {
                             Text(
-                                if (previewOpen) "Hide clock" else "Play / Sim",
-                                color = if (previewOpen) Mint else Cream,
+                                "Flight controls",
+                                color = Cream,
                                 fontSize = 10.5.sp,
                                 fontWeight = FontWeight.Medium
                             )
@@ -1634,14 +1350,9 @@ private fun WikidataFeatureCard(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(top = 2.dp)
         )
-        Text(
-            fact,
-            color = Color(0xFFCBD5E1),
-            fontSize = 11.sp,
-            lineHeight = 14.5.sp,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(top = 2.dp)
+        if (feature !is SelectedGlobeFeature.CityFeature) Text(
+            fact, color = Color(0xFFCBD5E1), fontSize = 11.sp, lineHeight = 14.5.sp,
+            maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp)
         )
     }
 }
@@ -1753,3 +1464,124 @@ private val IFE_AIRPORT_CITY_NAMES = mapOf(
     "LAX" to "Los Angeles",
     "SFO" to "San Francisco"
 )
+
+@Composable
+private fun RouteFlightHeader(
+    plan: FlightPlan, progress: FlightProgress, time: Instant,
+    originName: String, destinationName: String, simulation: Boolean, isLandscape: Boolean,
+    onBack: () -> Unit, onControls: () -> Unit, onOrientation: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(color = Ink.copy(alpha = .94f), modifier = modifier.fillMaxWidth().statusBarsPadding()) {
+        Row(Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Saved flights", tint = Cream) }
+            Column(Modifier.weight(1f).clickable(onClick = onControls).padding(horizontal = 4.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("${plan.number} · ${if (simulation) "SIMULATION" else "ESTIMATED"}", color = if (simulation) Amber else Mint,
+                        fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Icon(Icons.Outlined.Tune, "Flight controls", tint = Mint, modifier = Modifier.size(20.dp))
+                }
+                Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Column(Modifier.widthIn(max = 112.dp).weight(1f)) {
+                        Text(plan.origin.iata, color = Cream, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                        Text(originName, color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    IfeHeaderProgressBar(progress.fraction.toFloat(), Modifier.weight(1.4f).height(24.dp))
+                    Column(Modifier.widthIn(max = 112.dp).weight(1f), horizontalAlignment = Alignment.End) {
+                        Text(plan.destination.iata, color = Cream, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                        Text(destinationName, color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                Text(FlightPresentation.status(progress, plan.landedAt != null), color = if (progress.phase == "ARRIVED") Mint else Cream,
+                    fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Text("${FlightPresentation.altitude(progress)} · ${(progress.fraction * 100).roundToInt()}%", color = Muted, fontSize = 11.sp)
+            }
+            IconButton(onClick = onOrientation) {
+                Icon(Icons.Outlined.ScreenRotation, if (isLandscape) "Switch to portrait" else "Switch to landscape", tint = Mint)
+            }
+        }
+    }
+}
+
+@Composable
+private fun FlightControlsDialog(vm: FlightViewModel, onDismiss: () -> Unit, onSimulation: () -> Unit) {
+    val plan = vm.pack?.plan ?: return
+    val context = LocalContext.current
+    val zone = ZoneId.of(plan.origin.timezone)
+    var takeoff by remember(plan.actualTakeoff, plan.departure) {
+        mutableStateOf((plan.actualTakeoff ?: plan.departure).atZone(zone).toLocalDateTime().withSecond(0).withNano(0).toString())
+    }
+    var inputError by remember { mutableStateOf<String?>(null) }
+    var permissionDenied by remember { mutableStateOf(false) }
+    val notifications = context.getSystemService(android.app.NotificationManager::class.java)
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted && notifications.areNotificationsEnabled()) vm.enableFlightNotification() else permissionDenied = true
+    }
+    val monitoring = vm.monitoringPlan?.let { isSameFlight(it, plan) } == true
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("${plan.number} · Flight controls") }, text = {
+        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Position and altitude are estimates. Your saved timing applies to this flight only.", color = Muted)
+            OutlinedTextField(takeoff, { takeoff = it; inputError = null }, label = { Text("Actual takeoff · ${plan.origin.timezone}") },
+                supportingText = { Text(inputError ?: "Local date and time: 2026-10-20T10:30") },
+                isError = inputError != null, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(enabled = !vm.timingBusy, onClick = {
+                    runCatching { FlightPresentation.parseTakeoff(takeoff, plan.origin.timezone) }
+                        .onSuccess { vm.setActualTakeoff(it) }.onFailure { inputError = it.message ?: "Check date and time" }
+                }) { Text("Save takeoff") }
+                OutlinedButton(enabled = !vm.timingBusy, onClick = { vm.delayTakeoff() }) { Text("+30 min delay") }
+            }
+            TextButton(enabled = !vm.timingBusy, onClick = { vm.setActualTakeoff(Instant.now()) }) { Text("Took off now") }
+            Button(enabled = !vm.timingBusy && plan.landedAt == null, onClick = { vm.markLanded() }) {
+                Text(if (plan.landedAt != null) "Landed ✓" else "Mark landed now")
+            }
+            HorizontalDivider()
+            Text("Ongoing flight card", fontWeight = FontWeight.Bold)
+            Text("Route, plane progress and estimated arrival continue offline when this app is in the background.", fontSize = 12.sp, color = Muted)
+            OutlinedButton(onClick = {
+                if (monitoring) vm.stopFlightNotification()
+                else if (android.os.Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    permission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                } else if (!notifications.areNotificationsEnabled()) permissionDenied = true
+                else vm.enableFlightNotification()
+            }) { Text(if (monitoring) "Stop flight card" else "Enable flight card") }
+            if (permissionDenied) {
+                Text("Allow Flight Map notifications in Android settings to show the flight card.", color = Amber, fontSize = 12.sp)
+                TextButton(onClick = { context.startActivity(android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)) }) { Text("Notification settings") }
+            }
+            vm.error?.let { Text(it, color = Amber, fontSize = 12.sp) }
+            HorizontalDivider()
+            TextButton(onClick = onSimulation) { Text("Open simulation…") }
+            if (vm.livePlay != null || vm.previewFraction != null) TextButton(onClick = { vm.stopLivePlay(); onDismiss() }) { Text("Return to real time") }
+            Text(FlightPresentation.arrival(plan, FlightTiming.progress(plan, vm.now), vm.now), color = Muted, fontSize = 12.sp)
+            Text(plan.effectiveRouteLabel, color = Muted, fontSize = 11.sp)
+            Text(FlightTiming.progress(plan, vm.now).altitudeSource ?: "No altitude observation available", color = Muted, fontSize = 11.sp)
+        }
+    }, confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } })
+}
+
+@Composable
+private fun SimulationDialog(vm: FlightViewModel, onDismiss: () -> Unit) {
+    val plan = vm.pack?.plan?.copy(actualTakeoff = null, landedAt = null) ?: return
+    val progress = FlightTiming.progress(plan, vm.effectiveNow())
+    LaunchedEffect(Unit) { if (vm.livePlay == null && vm.previewFraction == null) vm.scrubTo(0f) }
+    val playing = vm.livePlay != null && vm.livePlay?.isScrubbing == false
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Simulation") }, text = {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Preview only. Actual takeoff, landing and the ongoing flight card keep their real times.", color = Muted)
+            Text("${(progress.fraction * 100).roundToInt()}% · ${FlightPresentation.status(progress)}", color = Amber)
+            Slider(value = progress.fraction.toFloat(), onValueChange = { vm.scrubTo(it) },
+                modifier = Modifier.semantics { contentDescription = "Simulation journey position" })
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = {
+                    if (playing) vm.pauseLivePlayKeepPosition()
+                    else vm.resumeLivePlayFromFraction(progress.fraction.toFloat())
+                }) { Text(if (playing) "Pause" else "Play") }
+                OutlinedButton(onClick = { vm.setSimSpeed(if (vm.simulationSpeed == 1) 60 else 1) }) { Text("${vm.simulationSpeed}× speed") }
+            }
+        }
+    }, confirmButton = { TextButton(onClick = onDismiss) { Text("View map") } },
+        dismissButton = { TextButton(onClick = { vm.stopLivePlay(); onDismiss() }) { Text("Return to real time") } })
+}

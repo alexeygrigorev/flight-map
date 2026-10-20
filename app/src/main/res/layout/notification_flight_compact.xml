@@ -1,0 +1,6 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="wrap_content"
+    android:orientation="vertical" android:background="#F2F6F3" android:paddingHorizontal="4dp">
+    <ImageView android:id="@+id/flight_route" android:layout_width="match_parent" android:layout_height="27dp" android:contentDescription="Estimated flight route progress" android:scaleType="fitCenter" />
+    <TextView android:id="@+id/flight_status" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#153C32" android:textSize="12sp" android:maxLines="1" />
+</LinearLayout>
