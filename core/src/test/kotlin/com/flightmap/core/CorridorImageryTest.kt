@@ -129,4 +129,35 @@ class CorridorImageryTest {
         assertTrue(summary, summary.contains("tiles"))
         assertTrue(summary, summary.contains("MB"))
     }
+
+    @Test
+    fun featherScaleIsFullInsideCoverage() {
+        assertEquals(1.0, CorridorImagery.featherScale(0.5, 0.5, true, true, true, true, true), 1e-9)
+        // Missing neighbour far from its edge still blends fully.
+        assertEquals(1.0, CorridorImagery.featherScale(0.5, 0.5, false, true, true, true, true), 1e-9)
+    }
+
+    @Test
+    fun featherScaleFadesAtMissingEdge() {
+        // At the very edge of a missing neighbour the imagery vanishes (no hard seam).
+        assertEquals(0.0, CorridorImagery.featherScale(0.0, 0.5, false, true, true, true, true), 1e-9)
+        assertEquals(0.0, CorridorImagery.featherScale(1.0, 0.5, true, false, true, true, true), 1e-9)
+        // Halfway across the feather band the blend is partial and monotonic.
+        val near = CorridorImagery.featherScale(0.25 / 256.0, 0.5, false, true, true, true, true)
+        val mid = CorridorImagery.featherScale(6.0 / 256.0, 0.5, false, true, true, true, true)
+        val far = CorridorImagery.featherScale(11.0 / 256.0, 0.5, false, true, true, true, true)
+        assertTrue("near=$near mid=$mid far=$far", near < mid && mid < far)
+        assertTrue(far < 1.0)
+        assertEquals(1.0, CorridorImagery.featherScale(12.0 / 256.0, 0.5, false, true, true, true, true), 1e-9)
+    }
+
+    @Test
+    fun featherSkirtOutsideCoverage() {
+        // Outside cached coverage the outward skirt fades quickly to pure fallback.
+        assertEquals(0.0, CorridorImagery.featherScale(0.5, 0.5, true, true, true, true, false, 12.0), 1e-9)
+        val atEdge = CorridorImagery.featherScale(0.5, 0.5, true, true, true, true, false, 0.0)
+        val outside = CorridorImagery.featherScale(0.5, 0.5, true, true, true, true, false, 6.0)
+        assertEquals(1.0, atEdge, 1e-9)
+        assertTrue("outside=$outside", outside > 0.0 && outside < atEdge)
+    }
 }

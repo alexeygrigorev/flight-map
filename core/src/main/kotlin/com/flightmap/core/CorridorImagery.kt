@@ -58,6 +58,48 @@ object CorridorImagery {
     /** Maximum tiles decoded for one rendered viewport frame (bounds phone memory). */
     const val MAX_VIEWPORT_TILES = 28
 
+    /**
+     * Width of the soft blend band where cached imagery meets bundled-fallback
+     * terrain, in tile texels. The globe renderer fades imagery out over this
+     * distance from the nearest missing tile so corridor edges never show a
+     * hard rectangular seam (see [featherScale]).
+     */
+    const val FEATHER_PX = 12.0
+
+    /**
+     * Coverage-edge feather factor in 0..1 for one imagery sample.
+     *
+     * Pure math, JVM-testable: [u]/[v] are the fractional position within the
+     * current tile (0..1). [west]/[east]/[north]/[south] report whether the
+     * 4-neighbour tiles are cached. When the current tile itself is missing
+     * ([centerPresent] false), [distOutTexels] is the distance in texels from
+     * the nearest cached edge (used for a short outward fade skirt).
+     */
+    fun featherScale(
+        u: Double,
+        v: Double,
+        west: Boolean,
+        east: Boolean,
+        north: Boolean,
+        south: Boolean,
+        centerPresent: Boolean,
+        distOutTexels: Double = 0.0
+    ): Double {
+        if (!centerPresent) {
+            if (distOutTexels >= FEATHER_PX) return 0.0
+            val t = (1.0 - distOutTexels / FEATHER_PX).coerceIn(0.0, 1.0)
+            return t * t * (3.0 - 2.0 * t)
+        }
+        var d = Double.POSITIVE_INFINITY
+        if (!west) d = minOf(d, u * TILE_PX)
+        if (!east) d = minOf(d, (1.0 - u) * TILE_PX)
+        if (!north) d = minOf(d, v * TILE_PX)
+        if (!south) d = minOf(d, (1.0 - v) * TILE_PX)
+        if (d.isInfinite()) return 1.0
+        val t = (d / FEATHER_PX).coerceIn(0.0, 1.0)
+        return t * t * (3.0 - 2.0 * t)
+    }
+
     fun tileUrl(z: Int, x: Int, y: Int): String =
         "$BASE_URL/$LAYER/default/$REFERENCE_DATE/$TILE_MATRIX_SET/$z/$y/$x.jpg"
 

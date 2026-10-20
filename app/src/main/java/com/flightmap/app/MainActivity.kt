@@ -358,6 +358,31 @@ private fun PrepareScreen(vm: FlightViewModel) {
                 Spacer(Modifier.width(10.dp))
                 Text("Open flight map", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             }
+            if (readyPack.mapTileKey == null) {
+                Spacer(Modifier.height(10.dp))
+                OutlinedButton(
+                    onClick = {
+                        vm.prepare(flight, date, origin, destination, departure, arrival)
+                    },
+                    enabled = vm.loaded && !vm.busy,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .semantics { contentDescription = "Download detailed route map" },
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Icon(Icons.Outlined.Download, null, Modifier.size(17.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Download detailed route map", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                }
+                Text(
+                    "Saved flight has the bundled overview only — re-download on Wi-Fi adds detailed imagery for deep zoom.",
+                    Modifier.padding(top = 6.dp),
+                    color = Muted,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp
+                )
+            }
         } else {
             Button(
                 onClick = {
@@ -581,15 +606,34 @@ private fun PrepareScreen(vm: FlightViewModel) {
                     }
 
                     if (isCurrentFlightPrepared) {
-                        TextButton(
-                            onClick = {
-                                optionsOpen = false
-                                vm.prepare(flight, date, origin, destination, departure, arrival)
-                            },
-                            enabled = !vm.busy,
-                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
-                        ) {
-                            Text("Refresh weather forecast", color = Mint, fontSize = 12.sp)
+                        if (matchingSavedPack?.mapTileKey == null) {
+                            TextButton(
+                                onClick = {
+                                    optionsOpen = false
+                                    vm.prepare(flight, date, origin, destination, departure, arrival)
+                                },
+                                enabled = !vm.busy,
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+                            ) {
+                                Text("Download detailed route map", color = Mint, fontSize = 12.sp)
+                            }
+                            Text(
+                                "Saved flight has the bundled overview only.",
+                                color = Muted,
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(start = 4.dp, bottom = 2.dp)
+                            )
+                        } else {
+                            TextButton(
+                                onClick = {
+                                    optionsOpen = false
+                                    vm.prepare(flight, date, origin, destination, departure, arrival)
+                                },
+                                enabled = !vm.busy,
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+                            ) {
+                                Text("Refresh offline map & weather", color = Mint, fontSize = 12.sp)
+                            }
                         }
                     }
 
@@ -702,7 +746,7 @@ private fun PrepareScreen(vm: FlightViewModel) {
             title = { Text("Made for the window seat") },
             text = {
                 Text(
-                    "Flight Map renders an airline IFE 3D satellite globe with filed ATS route corridors, curated overflown cities with Wikidata-style cards, mountain peaks, solar day/night terminator, and offline weather.\n\nData: NASA Blue Marble (public domain), Natural Earth (public domain), OurAirports, GeoNames, Open-Meteo.\n\nOffline maps: route-corridor vector regions via OpenFreeMap (© OpenStreetMap contributors, OpenMapTiles; offline use explicitly permitted) plus corridor imagery via NASA GIBS Blue Marble Shaded Relief (public domain). The globe screen shows full attribution.",
+                    "Flight Map renders an airline IFE 3D satellite globe with filed ATS route corridors, curated overflown cities with Wikidata-style cards, mountain peaks, solar day/night terminator, and offline weather.\n\nData: NASA Blue Marble (public domain), Natural Earth (public domain), OurAirports, GeoNames, Open-Meteo.\n\nOffline maps: route-corridor vector regions cached via OpenFreeMap (© OpenStreetMap contributors, OpenMapTiles; offline use explicitly permitted) for retention, plus corridor imagery via NASA GIBS Blue Marble Shaded Relief (public domain) which is the detail rendered on the 3D globe at deep zoom. The globe screen shows full attribution.",
                     fontSize = 13.sp
                 )
             },
@@ -999,8 +1043,32 @@ private fun FlightScreen(vm: FlightViewModel) {
             }
         }
 
-        // 3. Discreet Floating Bottom Panel (houses Wikidata city card on tap, Takeoff Play & Sim clock, and controls)
-        DiscreetIfePanel(
+        // 3. Attribution (always above the dock) + discreet floating bottom panel.
+        // The pill rides directly on top of the panel, so it stays legible and
+        // clear of the dock in portrait/landscape, with the timeline expanded
+        // or a city card open - never hidden behind the panel like before.
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(horizontal = if (isLandscape) 18.dp else 10.dp, vertical = 8.dp)
+                .widthIn(max = 880.dp),
+            horizontalAlignment = Alignment.End
+        ) {
+            Surface(
+                color = Color(0x99081218),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.padding(end = 4.dp, bottom = 4.dp)
+            ) {
+                Text(
+                    "© OpenStreetMap contributors · OpenFreeMap · OpenMapTiles | Imagery: NASA Visible Earth",
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                    color = Color.White.copy(alpha = 0.85f),
+                    fontSize = 9.sp,
+                    maxLines = 1
+                )
+            }
+            DiscreetIfePanel(
             pack = pack,
             corridorCities = corridorCities,
             progress = progress,
@@ -1054,12 +1122,9 @@ private fun FlightScreen(vm: FlightViewModel) {
                 vm.returnToCurrentPosition()
                 isPlaying = wasLive && vm.livePlay != null
             },
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .padding(horizontal = if (isLandscape) 18.dp else 10.dp, vertical = 8.dp)
-                .widthIn(max = 880.dp)
+            modifier = Modifier.fillMaxWidth()
         )
+    }
     }
 }
 

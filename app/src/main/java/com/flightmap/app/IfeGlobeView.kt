@@ -16,12 +16,8 @@ import androidx.compose.foundation.gestures.calculateRotation
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Text
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
@@ -30,8 +26,6 @@ import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntSize
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.flightmap.core.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -517,9 +511,9 @@ fun IfeGlobeView(
                 // 2. Native full-DPI anti-aliased atmospheric horizon limb ring (eliminates any upscale staircase blocks)
                 drawNativeHorizonLimb(canvas, projection)
 
-                // 3. Subtle spherical graticule + 50m vector lakes, rivers, and country borders clipped strictly to the 3D sphere disc
+                // 3. Bundled Natural Earth vector lakes, rivers, and country borders clipped strictly to the 3D sphere disc
                 drawGraticule(canvas, projection)
-                drawCountryBorders(canvas, projection, indexedRings)
+                drawCountryBorders(canvas, projection, indexedRings, imageryAlpha)
 
                 // 4. Solar day/night terminator curve
                 drawSolarTerminator(canvas, projection, subsolar)
@@ -537,15 +531,8 @@ fun IfeGlobeView(
                 drawAircraftIcon(canvas, projection, progress)
             }
         }
-
-        // Visible map attribution (ODbL/OpenFreeMap terms + NASA public-domain imagery).
-        Text(
-            text = "© OpenStreetMap contributors · OpenFreeMap · OpenMapTiles | Imagery: NASA Visible Earth",
-            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 8.dp, bottom = 4.dp),
-            color = Color.White.copy(alpha = 0.55f),
-            fontSize = 9.sp,
-            maxLines = 1
-        )
+        // Map attribution lives above the bottom dock in FlightScreen (always
+        // legible, clear of the panel in portrait/landscape, expanded or not).
     }
 }
 
@@ -590,29 +577,15 @@ private suspend fun loadImageryOverlay(
 }
 
 /**
- * Bilinear sample of a cached 256px imagery tile at the given geo position.
- * Returns null when no cached tile covers the position (renderer falls back).
+ * Bilinear decode of one cached 256px imagery tile at fractional tile position.
  */
-private fun sampleImageryBilinear(imagery: ImageryOverlay, lat: Double, lon: Double): Triple<Int, Int, Int>? {
-    val z = imagery.zoom
-    val n = 1 shl z.coerceIn(0, 8)
-    val fx = (lon + 180.0) / 360.0 * n
-    val latC = lat.coerceIn(-SlippyTiles.MAX_LATITUDE, SlippyTiles.MAX_LATITUDE)
-    val latRad = Math.toRadians(latC)
-    val fy = (1.0 - ln(tan(latRad) + 1.0 / cos(latRad)) / Math.PI) / 2.0 * n
-    val xi = floor(fx).toInt()
-    val yi = floor(fy).toInt()
-    if (yi < 0 || yi >= n) return null
-    val xx = ((xi % n) + n) % n
-    val tex = imagery.tiles[CorridorImagery.encodeKey(z, xx, yi)] ?: return null
-    val u = (fx - floor(fx)).coerceIn(0.0, 1.0)
-    val v = (fy - floor(fy)).coerceIn(0.0, 1.0)
-    val tx = (u * 255.0).toInt().coerceIn(0, 255)
-    val ty = (v * 255.0).toInt().coerceIn(0, 255)
+private fun decodeImageryTexel(tex: IntArray, u: Double, v: Double): Triple<Int, Int, Int> {
+    val tx = (u.coerceIn(0.0, 1.0) * 255.0).toInt().coerceIn(0, 255)
+    val ty = (v.coerceIn(0.0, 1.0) * 255.0).toInt().coerceIn(0, 255)
     val tx1 = (tx + 1).coerceAtMost(255)
     val ty1 = (ty + 1).coerceAtMost(255)
-    val fu = ((u * 255.0 - tx) * 256.0).toInt().coerceIn(0, 256)
-    val fv = ((v * 255.0 - ty) * 256.0).toInt().coerceIn(0, 256)
+    val fu = ((u.coerceIn(0.0, 1.0) * 255.0 - tx) * 256.0).toInt().coerceIn(0, 256)
+    val fv = ((v.coerceIn(0.0, 1.0) * 255.0 - ty) * 256.0).toInt().coerceIn(0, 256)
     val iu = 256 - fu
     val iv = 256 - fv
     val row0 = ty * 256
@@ -633,6 +606,73 @@ private fun sampleImageryBilinear(imagery: ImageryOverlay, lat: Double, lon: Dou
         (c01 and 0xFF) * w01 + (c11 and 0xFF) * w11) shr 16)
     return Triple(r, g, b)
 }
+
+/**
+ * Coverage-feathered sample of cached corridor imagery at the given geo position.
+ *
+ * Returns the graded sample plus the effective local blend weight (0..1), or
+ * null when no cached tile covers the position. Near a coverage edge the
+ * weight ramps smoothly to zero ([CorridorImagery.featherScale]) so detailed
+ * imagery dissolves into the bundled fallback instead of ending in a hard
+ * rectangular seam; just outside coverage a short fade skirt is drawn from
+ * the nearest cached edge texels.
+ */
+private fun sampleImageryFeathered(
+    imagery: ImageryOverlay,
+    lat: Double,
+    lon: Double,
+    globalAlpha: Float
+): Quad<Int, Int, Int, Float>? {
+    if (globalAlpha <= 0.001f || imagery.tiles.isEmpty()) return null
+    val z = imagery.zoom
+    val n = 1 shl z.coerceIn(0, 8)
+    val fx = (lon + 180.0) / 360.0 * n
+    val latC = lat.coerceIn(-SlippyTiles.MAX_LATITUDE, SlippyTiles.MAX_LATITUDE)
+    val latRad = Math.toRadians(latC)
+    val fy = (1.0 - ln(tan(latRad) + 1.0 / cos(latRad)) / Math.PI) / 2.0 * n
+    val xi = floor(fx).toInt()
+    val yi = floor(fy).toInt()
+    if (yi < 0 || yi >= n) return null
+    val xx = ((xi % n) + n) % n
+    val u = (fx - floor(fx)).coerceIn(0.0, 1.0)
+    val v = (fy - floor(fy)).coerceIn(0.0, 1.0)
+    val tiles = imagery.tiles
+    val center = tiles[CorridorImagery.encodeKey(z, xx, yi)]
+    if (center != null) {
+        val west = tiles.containsKey(CorridorImagery.encodeKey(z, (xx - 1 + n) % n, yi))
+        val east = tiles.containsKey(CorridorImagery.encodeKey(z, (xx + 1) % n, yi))
+        val north = yi > 0 && tiles.containsKey(CorridorImagery.encodeKey(z, xx, yi - 1))
+        val south = yi < n - 1 && tiles.containsKey(CorridorImagery.encodeKey(z, xx, yi + 1))
+        val scale = CorridorImagery.featherScale(u, v, west, east, north, south, true)
+        if (scale <= 0.001) return null
+        val (r, g, b) = decodeImageryTexel(center, u, v)
+        return Quad(r, g, b, (globalAlpha * scale).toFloat().coerceIn(0f, 1f))
+    }
+    // Outside coverage: fade a short skirt in from the nearest cached edge.
+    var bestDist = Double.POSITIVE_INFINITY
+    var bestTex: IntArray? = null
+    var bestU = 0.0
+    var bestV = 0.0
+    fun consider(distTexels: Double, tex: IntArray?, su: Double, sv: Double) {
+        if (tex != null && distTexels < bestDist) {
+            bestDist = distTexels
+            bestTex = tex
+            bestU = su
+            bestV = sv
+        }
+    }
+    consider(u * 256.0, tiles[CorridorImagery.encodeKey(z, (xx - 1 + n) % n, yi)], 1.0, v)
+    consider((1.0 - u) * 256.0, tiles[CorridorImagery.encodeKey(z, (xx + 1) % n, yi)], 0.0, v)
+    if (yi > 0) consider(v * 256.0, tiles[CorridorImagery.encodeKey(z, xx, yi - 1)], u, 1.0)
+    if (yi < n - 1) consider((1.0 - v) * 256.0, tiles[CorridorImagery.encodeKey(z, xx, yi + 1)], u, 0.0)
+    val tex = bestTex ?: return null
+    val scale = CorridorImagery.featherScale(0.5, 0.5, true, true, true, true, false, bestDist)
+    if (scale <= 0.001) return null
+    val (r, g, b) = decodeImageryTexel(tex, bestU, bestV)
+    return Quad(r, g, b, (globalAlpha * scale).toFloat().coerceIn(0f, 1f))
+}
+
+private data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
 
 private fun drawNativeHorizonLimb(canvas: Canvas, proj: GlobeProjection) {
     val outerGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -849,14 +889,15 @@ private fun render3DGlobeRaster(
                 }
 
                 // Deep-zoom corridor detail: blend cached offline imagery over bundled
-                // relief along the route. Missing tiles keep bundled relief (fallback).
+                // relief along the route. Coverage edges feather into the fallback
+                // (no hard rectangular seam); missing tiles keep bundled relief.
                 if (imagery != null && imageryAlpha > 0.001f && imagery.tiles.isNotEmpty()) {
-                    sampleImageryBilinear(imagery, lat, lon)?.let { (ir, ig, ib) ->
+                    sampleImageryFeathered(imagery, lat, lon, imageryAlpha)?.let { q ->
                         // Same tonal grading as bundled relief for seamless tile edges.
-                        val iR = (ir * 1.08 + 10.0).coerceIn(6.0, 244.0)
-                        val iG = (ig * 1.09 + 12.0).coerceIn(22.0, 244.0)
-                        val iB = (ib * 1.08 + 12.0).coerceIn(20.0, 244.0)
-                        val a = imageryAlpha.toDouble().coerceIn(0.0, 1.0)
+                        val iR = (q.first * 1.08 + 10.0).coerceIn(6.0, 244.0)
+                        val iG = (q.second * 1.09 + 12.0).coerceIn(22.0, 244.0)
+                        val iB = (q.third * 1.08 + 12.0).coerceIn(20.0, 244.0)
+                        val a = q.fourth.toDouble().coerceIn(0.0, 1.0)
                         baseR = (baseR * (1.0 - a) + iR * a).toInt().coerceIn(6, 244)
                         baseG = (baseG * (1.0 - a) + iG * a).toInt().coerceIn(22, 244)
                         baseB = (baseB * (1.0 - a) + iB * a).toInt().coerceIn(20, 244)
@@ -1033,8 +1074,14 @@ private fun drawGraticule(canvas: Canvas, proj: GlobeProjection) {
 private fun drawCountryBorders(
     canvas: Canvas,
     proj: GlobeProjection,
-    indexedRings: List<IndexedRing>
+    indexedRings: List<IndexedRing>,
+    detailBlend: Float = 0f
 ) {
+    // Coarse bundled inland-water polygons are far wider than real rivers/lakes
+    // at deep zoom; fade them out wherever detailed NASA imagery is displayed
+    // (the imagery already shows real water). Country borders always stay.
+    val waterFade = (1f - detailBlend).coerceIn(0f, 1f)
+    val showWater = waterFade > 0.01f
     val zoomBoost = (proj.zoom.toFloat() - 1.0f).coerceIn(0f, 3.0f)
     val borderHaloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = android.graphics.Color.argb(95, 8, 18, 36)
@@ -1051,17 +1098,17 @@ private fun drawCountryBorders(
         strokeCap = Paint.Cap.ROUND
     }
     val lakeFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = android.graphics.Color.argb(120, 14, 52, 102)
+        color = android.graphics.Color.argb((120 * waterFade).toInt().coerceIn(0, 255), 14, 52, 102)
         style = Paint.Style.FILL
     }
     val lakeShorePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = android.graphics.Color.argb(145, 105, 188, 242)
+        color = android.graphics.Color.argb((145 * waterFade).toInt().coerceIn(0, 255), 105, 188, 242)
         style = Paint.Style.STROKE
         strokeWidth = 1.0f + zoomBoost * 0.12f
         strokeJoin = Paint.Join.ROUND
     }
     val riverPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = android.graphics.Color.argb((85 + zoomBoost * 24f).toInt().coerceAtMost(165), 88, 178, 238)
+        color = android.graphics.Color.argb(((85 + zoomBoost * 24f).toInt().coerceAtMost(165) * waterFade).toInt().coerceIn(0, 255), 88, 178, 238)
         style = Paint.Style.STROKE
         strokeWidth = 1.15f + zoomBoost * 0.18f
         strokeJoin = Paint.Join.ROUND
@@ -1093,6 +1140,7 @@ private fun drawCountryBorders(
 
     for (ring in indexedRings) {
         if (ring.iso == "RIVER" && proj.zoom < 1.30) continue
+        if (!showWater && (ring.iso == "RIVER" || ring.iso == "LAKE")) continue
 
         val dot = ring.cx * camX + ring.cy * camY + ring.cz * camZ
         val maxCos = cos((fovAngRad + ring.maxAngRad).coerceAtMost(Math.PI))
@@ -1123,14 +1171,14 @@ private fun drawCountryBorders(
         if (!path.isEmpty) {
             when (ring.iso) {
                 "LAKE" -> {
-                    if (allVisible && proj.zoom >= 1.35) {
+                    if (showWater && allVisible && proj.zoom >= 1.35) {
                         path.close()
                         canvas.drawPath(path, lakeFillPaint)
                     }
-                    canvas.drawPath(path, lakeShorePaint)
+                    if (showWater) canvas.drawPath(path, lakeShorePaint)
                 }
                 "RIVER" -> {
-                    canvas.drawPath(path, riverPaint)
+                    if (showWater) canvas.drawPath(path, riverPaint)
                 }
                 else -> {
                     if (proj.zoom >= 1.65) {

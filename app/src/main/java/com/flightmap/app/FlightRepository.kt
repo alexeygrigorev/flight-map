@@ -55,6 +55,10 @@ val FlightPack.forecastsReady: Boolean
 
 fun FlightPack.isWeatherReady(): Boolean = forecastsReady
 
+/** True when high-detail corridor raster imagery (NASA GIBS, offline cache) is attached to this pack. */
+val FlightPack.hasDetailedImagery: Boolean
+    get() = mapTileKey != null
+
 fun isSameFlight(a: FlightPlan, b: FlightPlan): Boolean =
     a.number == b.number &&
     a.origin.iata == b.origin.iata &&
