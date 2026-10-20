@@ -7,6 +7,7 @@ import com.google.gson.reflect.TypeToken
 import com.google.gson.stream.JsonReader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -28,7 +29,8 @@ data class FlightPack(
     val mapDetailSummary: String? = "Corridor saved · zoom 0–5",
     val sampledWeatherIds: List<String>? = emptyList(),
     /** Sanitized OfflinePlan flightKey identifying cached corridor raster imagery (null = bundled relief only). */
-    val mapTileKey: String? = null
+    val mapTileKey: String? = null,
+    val offlineContext: PreparedFlightContext? = null
 ) {
     val effectiveMapDetailSummary: String
         get() = if (mapDetailSummary.isNullOrBlank()) "Corridor saved · zoom 0–5" else mapDetailSummary
@@ -171,7 +173,10 @@ object FlightPackCodec {
         require(rawPlan.arrival > rawPlan.departure) {
             "Flight pack arrival must be after departure"
         }
-        val enrichedPlan = if (rawPlan.waypoints.isNullOrEmpty() || rawPlan.routeSource == null || rawPlan.routeSource == "GREAT_CIRCLE_ESTIMATE") {
+        require(rawPlan.historicalTrack?.identifies(rawPlan) != false) {
+            "Historical track is invalid or belongs to another flight"
+        }
+        val enrichedPlan = if (rawPlan.waypoints.isNullOrEmpty() || rawPlan.routeSource == null || rawPlan.routeSource == "GREAT_CIRCLE_ESTIMATE" || rawPlan.routeSource?.startsWith("FILED_ATS") == true) {
             TrajectoryCatalog.enrichPlan(rawPlan)
         } else {
             rawPlan
@@ -219,7 +224,9 @@ object FlightPackCodec {
             mapReady = true,
             mapRegionIds = emptyList(),
             mapDetailSummary = summary,
-            sampledWeatherIds = safeSampled
+            sampledWeatherIds = safeSampled,
+            mapTileKey = pack.mapTileKey,
+            offlineContext = pack.offlineContext ?: OfflineFlightContext.prepare(enrichedPlan)
         )
     }
 }
@@ -239,6 +246,68 @@ class FlightRepository(private val context: Context) {
     private val packFile = File(context.filesDir, "flight-pack.json")
     private val packsFile = File(context.filesDir, "flight-packs.json")
     private val checkpointFile = File(context.filesDir, "preparation-checkpoint.json")
+    private val historyDirectory = File(context.filesDir, "historical-tracks")
+
+    /** Resolve/cache history before building any route-dependent offline data. No in-flight I/O. */
+    suspend fun prepareHistory(plan: FlightPlan, refresh: Boolean = true): FlightPlan = withContext(Dispatchers.IO) {
+        plan.effectiveHistoricalTrack?.let {
+            cacheHistory(plan, it)
+            return@withContext TrajectoryCatalog.enrichPlan(plan)
+        }
+        val key = historyKey(plan)
+        var track = plan.historicalTrack?.takeIf { it.identifies(plan) } ?: runCatching {
+            gson.fromJson(File(historyDirectory, "$key.json").readText(), HistoricalTrack::class.java)
+        }.getOrNull()?.takeIf { it.identifies(plan) }
+        if (track == null) {
+            track = runCatching {
+                context.assets.open("data/history/$key.json").bufferedReader().use {
+                    gson.fromJson(it, HistoricalTrack::class.java)
+                }
+            }.getOrNull()?.takeIf { it.identifies(plan) }
+        }
+        // Only published, explicitly curated history is fetched. Never treat an airport lookup as a track.
+        if (refresh && key == "MU689-PVG-DYG") {
+            val downloaded = runCatching {
+                val historyClient = client.newBuilder().callTimeout(5, TimeUnit.SECONDS).build()
+                val url = "https://raw.githubusercontent.com/alexeygrigorev/flight-map/main/app/src/main/assets/data/history/$key.json"
+                historyClient.newCall(Request.Builder().url(url).build()).execute().use { response ->
+                    if (!response.isSuccessful) return@use null
+                    val body = response.body ?: return@use null
+                    val bytes = ByteArray(1_000_001)
+                    var count = 0
+                    body.byteStream().use { input ->
+                        while (count < bytes.size) {
+                            val read = input.read(bytes, count, bytes.size - count)
+                            if (read < 0) break
+                            count += read
+                        }
+                    }
+                    if (count > 1_000_000) return@use null
+                    gson.fromJson(String(bytes, 0, count, Charsets.UTF_8), HistoricalTrack::class.java)
+                }
+            }.getOrNull()?.takeIf { it.identifies(plan) }
+            coroutineContext.ensureActive()
+            // Do not replace a more complete cached user observation with a partial catalog capture.
+            if (downloaded != null && (track == null || downloaded.matches(plan) || !track.matches(plan))) track = downloaded
+        }
+        track?.let { cacheHistory(plan, it) }
+        TrajectoryCatalog.enrichPlan(plan.copy(historicalTrack = track))
+    }
+
+    private fun historyKey(plan: FlightPlan): String =
+        "${TrajectoryCatalog.normalizeFlightNumber(plan.number)}-${plan.origin.iata}-${plan.destination.iata}"
+            .replace(Regex("[^A-Za-z0-9_-]"), "_")
+
+    private suspend fun cacheHistory(plan: FlightPlan, track: HistoricalTrack) = fileMutex.withLock {
+        check(historyDirectory.isDirectory || historyDirectory.mkdirs()) { "Cannot create history cache" }
+        val temporary = File(historyDirectory, "${UUID.randomUUID()}.tmp")
+        try {
+            temporary.writeText(gson.toJson(track))
+            check(temporary.renameTo(File(historyDirectory, "${historyKey(plan)}.json"))) { "Cannot save historical track" }
+        } finally {
+            temporary.delete()
+        }
+    }
 
     var airports: List<Airport> = emptyList(); private set
     var allCities: List<City> = emptyList(); private set
@@ -430,7 +499,10 @@ class FlightRepository(private val context: Context) {
         if (allCities.isEmpty() || airports.isEmpty()) {
             loadData()
         }
-        val imported = FlightPackCodec.parsePacksWithMeta(rawJson, gson, allCities, airports)
+        val parsed = FlightPackCodec.parsePacksWithMeta(rawJson, gson, allCities, airports)
+        val imported = parsed.copy(packs = parsed.packs.map {
+            FlightPackCodec.normalizeImportedPack(it.copy(plan = prepareHistory(it.plan, refresh = false)), allCities)
+        })
         for (pack in imported.packs.asReversed()) {
             save(pack)
         }

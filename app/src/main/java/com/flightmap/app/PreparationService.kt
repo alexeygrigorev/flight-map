@@ -147,12 +147,13 @@ class PreparationService : Service() {
         }
     }
 
-    private suspend fun startPreparationWorkflow(plan: FlightPlan) {
+    private suspend fun startPreparationWorkflow(requestedPlan: FlightPlan) {
         preparationJob?.let {
             it.cancel()
             it.join()
         }
 
+        val plan = repository.prepareHistory(requestedPlan)
         val initialMapIds = withContext(Dispatchers.Main.immediate) {
             val maps = OfflineMaps(applicationContext)
             maps.regionsFor(plan)
@@ -251,15 +252,16 @@ class PreparationService : Service() {
         }
     }
 
-    private fun executePreparation(plan: FlightPlan, initialCheckpoint: PreparationCheckpoint) {
+    private fun executePreparation(requestedPlan: FlightPlan, initialCheckpoint: PreparationCheckpoint) {
         _progressFlow.value = PreparationProgress(
-            plan = plan, isBusy = true, stage = initialCheckpoint.stage,
+            plan = requestedPlan, isBusy = true, stage = initialCheckpoint.stage,
             status = PreparationStatus.IN_PROGRESS,
             routeReady = initialCheckpoint.routeReady, citiesReady = initialCheckpoint.citiesReady,
             weatherReady = initialCheckpoint.weatherReady, mapReady = initialCheckpoint.mapReady,
             weatherDetail = initialCheckpoint.weatherDetail, mapDetail = initialCheckpoint.mapDetail
         )
         preparationJob = serviceScope.launch {
+            var plan = requestedPlan
             var currentCheckpoint = initialCheckpoint
             val issues = mutableListOf<String>()
 
@@ -267,6 +269,15 @@ class PreparationService : Service() {
                 if (repository.airports.isEmpty()) {
                     repository.loadData()
                 }
+
+                plan = repository.prepareHistory(requestedPlan)
+                val routeChanged = requestedPlan.effectiveWaypoints != plan.effectiveWaypoints
+                currentCheckpoint = if (routeChanged) {
+                    // A refreshed real track requires a new corridor, forecasts and map regions.
+                    PreparationCheckpoint(plan = plan, status = PreparationStatus.IN_PROGRESS, updatedAt = Instant.now())
+                } else currentCheckpoint.copy(plan = plan)
+                repository.saveCheckpoint(currentCheckpoint)
+                _progressFlow.value = _progressFlow.value.copy(plan = plan)
 
                 // 1. Corridor & cities
                 val cities = if (currentCheckpoint.cities.isNotEmpty()) {
@@ -495,7 +506,8 @@ class PreparationService : Service() {
                     mapRegionIds = ids,
                     mapDetailSummary = mapDetail,
                     sampledWeatherIds = sampleCityIds,
-                    mapTileKey = tileKey
+                    mapTileKey = tileKey,
+                    offlineContext = com.flightmap.core.OfflineFlightContext.prepare(plan)
                 )
                 repository.save(readyPack)
 

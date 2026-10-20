@@ -19,20 +19,8 @@ data class FiledScheduleTemplate(
     val waypoints: List<Pair<String, GeoPoint>>
 )
 
-/**
- * Provides real filed / expected ATS airway and ADS-B verified flight trajectories.
- *
- * Rather than inventing a naive great-circle across restricted or unflown airspace,
- * this catalog resolves actual expected tracks:
- * - Finnair AY87 / AY88 (HEL <-> PVG): Filed Southern Eurasian Corridor via Baltic FIRs,
- *   Poland, Romania, Black Sea, Türkiye/Georgia, Azerbaijan (Baku), Caspian Sea,
- *   Kazakhstan (Aktau, Kyzylorda, Shymkent, Almaty), Xinjiang (Ürümqi, Hami),
- *   Hexi Corridor (Dunhuang, Lanzhou), Xi'an, Nanjing, to Shanghai Pudong (PVG).
- * - Juneyao HO1608 / HO1607 (HEL <-> PVG): Filed Northern Siberian Airway Corridor.
- * - Additional real long-haul corridors (HEL-HND/NRT Polar route, HEL-ICN, HEL-HKG,
- *   HEL-SIN, HEL-BKK, HEL-DEL, FRA-PVG, LHR-PVG, CDG-PVG, JFK-LHR NAT track).
- * - Automatic airspace-aware corridor synthesis for Europe <-> East Asia flights.
- * - Explicit "Great-circle estimate" fallback label when no filed corridor exists.
+/** Advisory schedules and hand-authored geographic corridors, not filed plans or ADS-B observations.
+ * Genuine dated observations are supplied separately through FlightPlan.historicalTrack.
  */
 object TrajectoryCatalog {
 
@@ -216,8 +204,8 @@ object TrajectoryCatalog {
             departureLocal = LocalTime.of(10, 0),
             arrivalLocal = LocalTime.of(12, 10),
             arrivalDayOffset = 0,
-            routeSource = "FILED_ATS_ADSB",
-            routeLabel = "Filed ATS Route · Yangtze–Wulingyuan Corridor",
+            routeSource = "ESTIMATED_CORRIDOR",
+            routeLabel = "Estimated corridor · Yangtze–Wulingyuan Corridor",
             waypoints = pvgDygWaypoints
         ),
         FiledScheduleTemplate(
@@ -229,8 +217,8 @@ object TrajectoryCatalog {
             departureLocal = LocalTime.of(21, 40),
             arrivalLocal = LocalTime.of(23, 25),
             arrivalDayOffset = 0,
-            routeSource = "FILED_ATS_ADSB",
-            routeLabel = "Filed ATS Route · Hunan–Pearl River Corridor",
+            routeSource = "ESTIMATED_CORRIDOR",
+            routeLabel = "Estimated corridor · Hunan–Pearl River Corridor",
             waypoints = dygCanWaypoints
         ),
         FiledScheduleTemplate(
@@ -242,8 +230,8 @@ object TrajectoryCatalog {
             departureLocal = LocalTime.of(15, 10),
             arrivalLocal = LocalTime.of(20, 0),
             arrivalDayOffset = 0,
-            routeSource = "FILED_ATS_ADSB",
-            routeLabel = "Filed ATS Route · Ryukyu–Kuroshio Pacific Corridor",
+            routeSource = "ESTIMATED_CORRIDOR",
+            routeLabel = "Estimated corridor · Ryukyu–Kuroshio Pacific Corridor",
             waypoints = canHndWaypoints
         ),
         FiledScheduleTemplate(
@@ -255,8 +243,8 @@ object TrajectoryCatalog {
             departureLocal = LocalTime.of(17, 20),
             arrivalLocal = LocalTime.of(0, 40),
             arrivalDayOffset = 1,
-            routeSource = "FILED_ATS_ADSB",
-            routeLabel = "Filed ATS Route · Trans-Asian Silk Road Corridor",
+            routeSource = "ESTIMATED_CORRIDOR",
+            routeLabel = "Estimated corridor · Trans-Asian Silk Road Corridor",
             waypoints = nrtAuhWaypoints
         ),
         FiledScheduleTemplate(
@@ -268,8 +256,8 @@ object TrajectoryCatalog {
             departureLocal = LocalTime.of(2, 20),
             arrivalLocal = LocalTime.of(6, 20),
             arrivalDayOffset = 0,
-            routeSource = "FILED_ATS_ADSB",
-            routeLabel = "Filed ATS Route · Gulf–Anatolia–Central Europe Corridor",
+            routeSource = "ESTIMATED_CORRIDOR",
+            routeLabel = "Estimated corridor · Gulf–Anatolia–Central Europe Corridor",
             waypoints = auhBerWaypoints
         ),
         FiledScheduleTemplate(
@@ -281,8 +269,8 @@ object TrajectoryCatalog {
             departureLocal = LocalTime.of(2, 20),
             arrivalLocal = LocalTime.of(6, 20),
             arrivalDayOffset = 0,
-            routeSource = "FILED_ATS_ADSB",
-            routeLabel = "Filed ATS Route · Gulf–Anatolia–Central Europe Corridor",
+            routeSource = "ESTIMATED_CORRIDOR",
+            routeLabel = "Estimated corridor · Gulf–Anatolia–Central Europe Corridor",
             waypoints = auhBerWaypoints
         ),
         FiledScheduleTemplate(
@@ -294,8 +282,8 @@ object TrajectoryCatalog {
             departureLocal = LocalTime.of(1, 10),
             arrivalLocal = LocalTime.of(18, 25),
             arrivalDayOffset = 0,
-            routeSource = "FILED_ATS_ADSB",
-            routeLabel = "Filed ATS Route · Southern Eurasian Corridor",
+            routeSource = "ESTIMATED_CORRIDOR",
+            routeLabel = "Estimated corridor · Southern Eurasian Corridor",
             waypoints = helPvgSouthernWaypoints
         ),
         FiledScheduleTemplate(
@@ -307,8 +295,8 @@ object TrajectoryCatalog {
             departureLocal = LocalTime.of(9, 25),
             arrivalLocal = LocalTime.of(14, 20),
             arrivalDayOffset = 0,
-            routeSource = "FILED_ATS_ADSB",
-            routeLabel = "Filed ATS Route · Southern Eurasian Corridor",
+            routeSource = "ESTIMATED_CORRIDOR",
+            routeLabel = "Estimated corridor · Southern Eurasian Corridor",
             waypoints = helPvgSouthernWaypoints.reversed()
         ),
         FiledScheduleTemplate(
@@ -320,8 +308,8 @@ object TrajectoryCatalog {
             departureLocal = LocalTime.of(14, 30),
             arrivalLocal = LocalTime.of(4, 30),
             arrivalDayOffset = 1,
-            routeSource = "FILED_ATS_ADSB",
-            routeLabel = "Filed ATS Route · Northern Siberian Corridor",
+            routeSource = "ESTIMATED_CORRIDOR",
+            routeLabel = "Estimated corridor · Northern Siberian Corridor",
             waypoints = helPvgNorthernWaypoints
         ),
         FiledScheduleTemplate(
@@ -333,8 +321,8 @@ object TrajectoryCatalog {
             departureLocal = LocalTime.of(17, 45),
             arrivalLocal = LocalTime.of(13, 10),
             arrivalDayOffset = 1,
-            routeSource = "FILED_ATS_ADSB",
-            routeLabel = "Filed ATS Route · Arctic Polar Corridor",
+            routeSource = "ESTIMATED_CORRIDOR",
+            routeLabel = "Estimated corridor · Arctic Polar Corridor",
             waypoints = helHndPolarWaypoints.dropLast(1) + ("NRT · Tokyo Narita" to GeoPoint(35.7647, 140.3864))
         ),
         FiledScheduleTemplate(
@@ -346,8 +334,8 @@ object TrajectoryCatalog {
             departureLocal = LocalTime.of(18, 30),
             arrivalLocal = LocalTime.of(14, 5),
             arrivalDayOffset = 1,
-            routeSource = "FILED_ATS_ADSB",
-            routeLabel = "Filed ATS Route · Arctic Polar Corridor",
+            routeSource = "ESTIMATED_CORRIDOR",
+            routeLabel = "Estimated corridor · Arctic Polar Corridor",
             waypoints = helHndPolarWaypoints
         ),
         FiledScheduleTemplate(
@@ -359,8 +347,8 @@ object TrajectoryCatalog {
             departureLocal = LocalTime.of(17, 35),
             arrivalLocal = LocalTime.of(11, 20),
             arrivalDayOffset = 1,
-            routeSource = "FILED_ATS_ADSB",
-            routeLabel = "Filed ATS Route · Southern Eurasian Corridor",
+            routeSource = "ESTIMATED_CORRIDOR",
+            routeLabel = "Estimated corridor · Southern Eurasian Corridor",
             waypoints = helIcnSouthernWaypoints
         ),
         FiledScheduleTemplate(
@@ -372,8 +360,8 @@ object TrajectoryCatalog {
             departureLocal = LocalTime.of(17, 15),
             arrivalLocal = LocalTime.of(11, 25),
             arrivalDayOffset = 1,
-            routeSource = "FILED_ATS_ADSB",
-            routeLabel = "Filed ATS Route · Southern Eurasian Corridor",
+            routeSource = "ESTIMATED_CORRIDOR",
+            routeLabel = "Estimated corridor · Southern Eurasian Corridor",
             waypoints = listOf(
                 "FRA · Frankfurt" to GeoPoint(50.0379, 8.5622),
                 "VIE · Vienna FIR" to GeoPoint(48.1103, 16.5697),
@@ -389,8 +377,8 @@ object TrajectoryCatalog {
             departureLocal = LocalTime.of(12, 25),
             arrivalLocal = LocalTime.of(7, 55),
             arrivalDayOffset = 1,
-            routeSource = "FILED_ATS_ADSB",
-            routeLabel = "Filed ATS Route · Southern Eurasian Corridor",
+            routeSource = "ESTIMATED_CORRIDOR",
+            routeLabel = "Estimated corridor · Southern Eurasian Corridor",
             waypoints = listOf(
                 "LHR · London Heathrow" to GeoPoint(51.4700, -0.4543),
                 "FRA · Frankfurt FIR" to GeoPoint(50.0379, 8.5622),
@@ -406,8 +394,8 @@ object TrajectoryCatalog {
             departureLocal = LocalTime.of(0, 55),
             arrivalLocal = LocalTime.of(6, 20),
             arrivalDayOffset = 0,
-            routeSource = "FILED_ATS_ADSB",
-            routeLabel = "Filed ATS Route · Northern Siberian Corridor",
+            routeSource = "ESTIMATED_CORRIDOR",
+            routeLabel = "Estimated corridor · Northern Siberian Corridor",
             waypoints = helPvgNorthernWaypoints.reversed()
         ),
         FiledScheduleTemplate(
@@ -419,8 +407,8 @@ object TrajectoryCatalog {
             departureLocal = LocalTime.of(23, 5),
             arrivalLocal = LocalTime.of(5, 55),
             arrivalDayOffset = 1,
-            routeSource = "FILED_ATS_ADSB",
-            routeLabel = "Filed ATS Route · Arctic Polar Corridor",
+            routeSource = "ESTIMATED_CORRIDOR",
+            routeLabel = "Estimated corridor · Arctic Polar Corridor",
             waypoints = (helHndPolarWaypoints.dropLast(1) + ("NRT · Tokyo Narita" to GeoPoint(35.7647, 140.3864))).reversed()
         ),
         FiledScheduleTemplate(
@@ -432,8 +420,8 @@ object TrajectoryCatalog {
             departureLocal = LocalTime.of(21, 50),
             arrivalLocal = LocalTime.of(4, 40),
             arrivalDayOffset = 1,
-            routeSource = "FILED_ATS_ADSB",
-            routeLabel = "Filed ATS Route · Arctic Polar Corridor",
+            routeSource = "ESTIMATED_CORRIDOR",
+            routeLabel = "Estimated corridor · Arctic Polar Corridor",
             waypoints = helHndPolarWaypoints.reversed()
         ),
         FiledScheduleTemplate(
@@ -445,8 +433,8 @@ object TrajectoryCatalog {
             departureLocal = LocalTime.of(21, 50),
             arrivalLocal = LocalTime.of(5, 30),
             arrivalDayOffset = 1,
-            routeSource = "FILED_ATS_ADSB",
-            routeLabel = "Filed ATS Route · Southern Eurasian Corridor",
+            routeSource = "ESTIMATED_CORRIDOR",
+            routeLabel = "Estimated corridor · Southern Eurasian Corridor",
             waypoints = helIcnSouthernWaypoints.reversed()
         ),
         FiledScheduleTemplate(
@@ -458,8 +446,8 @@ object TrajectoryCatalog {
             departureLocal = LocalTime.of(13, 45),
             arrivalLocal = LocalTime.of(19, 50),
             arrivalDayOffset = 0,
-            routeSource = "FILED_ATS_ADSB",
-            routeLabel = "Filed ATS Route · Southern Eurasian Corridor",
+            routeSource = "ESTIMATED_CORRIDOR",
+            routeLabel = "Estimated corridor · Southern Eurasian Corridor",
             waypoints = (listOf(
                 "FRA · Frankfurt" to GeoPoint(50.0379, 8.5622),
                 "VIE · Vienna FIR" to GeoPoint(48.1103, 16.5697),
@@ -475,8 +463,8 @@ object TrajectoryCatalog {
             departureLocal = LocalTime.of(11, 0),
             arrivalLocal = LocalTime.of(16, 55),
             arrivalDayOffset = 0,
-            routeSource = "FILED_ATS_ADSB",
-            routeLabel = "Filed ATS Route · Southern Eurasian Corridor",
+            routeSource = "ESTIMATED_CORRIDOR",
+            routeLabel = "Estimated corridor · Southern Eurasian Corridor",
             waypoints = (listOf(
                 "LHR · London Heathrow" to GeoPoint(51.4700, -0.4543),
                 "FRA · Frankfurt FIR" to GeoPoint(50.0379, 8.5622),
@@ -713,10 +701,12 @@ object TrajectoryCatalog {
     )
 
     /**
-     * Enriches a FlightPlan with real filed trajectory waypoints if known or synthesizable
+     * Enriches a FlightPlan with advisory corridor waypoints if known or synthesizable
      * via airspace rules; otherwise marks the route explicitly as a Great-circle estimate.
      */
     fun enrichPlan(plan: FlightPlan): FlightPlan {
+        if (plan.effectiveHistoricalTrack != null) return plan
+        if (plan.routeSource == "USER_SUPPLIED_ROUTE" && !plan.waypoints.isNullOrEmpty()) return plan
         val norm = normalizeFlightNumber(plan.number)
         val tmpl = templates[norm]
         if (tmpl != null && tmpl.originIata == plan.origin.iata && tmpl.destinationIata == plan.destination.iata) {
@@ -754,8 +744,8 @@ object TrajectoryCatalog {
             return plan.copy(
                 waypoints = pts,
                 waypointNames = wps.map { it.first },
-                routeSource = "FILED_ATS_ADSB",
-                routeLabel = if (useNorthern) "Filed ATS Route · Northern Siberian Corridor" else "Filed ATS Route · Southern Eurasian Corridor"
+                routeSource = "ESTIMATED_CORRIDOR",
+                routeLabel = if (useNorthern) "Estimated corridor · Northern Siberian Corridor" else "Estimated corridor · Southern Eurasian Corridor"
             )
         }
 
@@ -772,8 +762,8 @@ object TrajectoryCatalog {
             return plan.copy(
                 waypoints = pts,
                 waypointNames = wps.map { it.first },
-                routeSource = "FILED_ATS_ADSB",
-                routeLabel = if (useNorthern) "Filed ATS Route · Northern Siberian Corridor" else "Filed ATS Route · Southern Eurasian Corridor"
+                routeSource = "ESTIMATED_CORRIDOR",
+                routeLabel = if (useNorthern) "Estimated corridor · Northern Siberian Corridor" else "Estimated corridor · Southern Eurasian Corridor"
             )
         }
 
@@ -807,7 +797,7 @@ object TrajectoryCatalog {
                 return plan.copy(
                     waypoints = full.map { it.second },
                     waypointNames = full.map { it.first },
-                    routeSource = "FILED_ATS_CORRIDOR",
+                    routeSource = "ESTIMATED_CORRIDOR",
                     routeLabel = "Filed ATS Airway · Southern Eurasian Corridor"
                 )
             }

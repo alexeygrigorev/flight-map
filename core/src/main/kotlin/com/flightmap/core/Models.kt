@@ -33,7 +33,11 @@ data class FlightPlan(
     val waypoints: List<GeoPoint>? = emptyList(),
     val waypointNames: List<String>? = emptyList(),
     val routeSource: String? = null,
-    val routeLabel: String? = null
+    val routeLabel: String? = null,
+    val historicalTrack: HistoricalTrack? = null,
+    val actualTakeoff: Instant? = null,
+    val landedAt: Instant? = null,
+    val estimatedAirborneMinutes: Int? = null
 ) {
     init {
         require(arrival > departure) {
@@ -42,17 +46,26 @@ data class FlightPlan(
     }
 
     val effectiveWaypoints: List<GeoPoint>
-        get() = if (waypoints != null && waypoints.size >= 2) waypoints else listOf(origin.point, destination.point)
+        get() = effectiveHistoricalTrack?.points?.map { it.point }
+            ?: if (waypoints != null && waypoints.size >= 2) waypoints else listOf(origin.point, destination.point)
+
+    val effectiveHistoricalTrack: HistoricalTrack?
+        get() = historicalTrack?.takeIf { it.matches(this) }
 
     val effectiveWaypointNames: List<String>
         get() = waypointNames.orEmpty()
 
     val isRealTrajectory: Boolean
-        get() = waypoints != null && waypoints.size > 2 && routeSource != null && routeSource != "GREAT_CIRCLE_ESTIMATE"
+        get() = effectiveHistoricalTrack != null
 
     val effectiveRouteLabel: String
-        get() = routeLabel?.takeIf { it.isNotBlank() }
-            ?: if (isRealTrajectory) "Filed ATS trajectory" else "Great-circle estimate"
+        get() = effectiveHistoricalTrack?.let { "Historical track · ${it.source} · ${it.observedDeparture.toString().take(10)}" }
+            ?: historicalTrack?.takeIf { it.identifies(this) }?.let {
+                "Estimated corridor · partial history ${it.observedDeparture.toString().take(10)}; airport turns unavailable"
+            }
+            ?: if (routeSource?.startsWith("FILED_ATS") == true) "Estimated route corridor · historical track unavailable"
+            else routeLabel?.takeIf { it.isNotBlank() }
+                ?: "Great-circle estimate"
 }
 
 data class FlightProgress(
@@ -62,7 +75,9 @@ data class FlightProgress(
     val flownKm: Double,
     val remainingKm: Double,
     val remaining: Duration,
-    val phase: String
+    val phase: String,
+    val altitudeMeters: Double? = null,
+    val altitudeSource: String? = null
 )
 
 data class WeatherHour(

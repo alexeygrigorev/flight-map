@@ -17,8 +17,8 @@ class TrajectoryAndGlobeTest {
         val rawPlan = FlightPlan("AY87", hel, pvg, dep, arr)
         val enriched = TrajectoryCatalog.enrichPlan(rawPlan)
 
-        assertTrue("AY87 must resolve to a real filed trajectory", enriched.isRealTrajectory)
-        assertEquals("FILED_ATS_ADSB", enriched.routeSource)
+        assertFalse("Advisory corridor must not claim an observed trajectory", enriched.isRealTrajectory)
+        assertEquals("ESTIMATED_CORRIDOR", enriched.routeSource)
         assertTrue(enriched.effectiveRouteLabel.contains("Southern Eurasian Corridor"))
         assertTrue("AY87 should have >= 25 filed waypoints", enriched.effectiveWaypoints.size >= 25)
 
@@ -224,7 +224,7 @@ class TrajectoryAndGlobeTest {
         assertEquals(Instant.parse("2026-10-19T22:10:00Z"), plan.departure)
         // 2026-10-20T18:25 Asia/Shanghai (UTC+8) = 2026-10-20T10:25:00Z
         assertEquals(Instant.parse("2026-10-20T10:25:00Z"), plan.arrival)
-        assertTrue(plan.isRealTrajectory)
+        assertFalse(plan.isRealTrajectory)
         assertEquals(36, plan.effectiveWaypoints.size)
         assertTrue(plan.effectiveRouteLabel.contains("Southern Eurasian Corridor"))
     }
@@ -247,7 +247,7 @@ class TrajectoryAndGlobeTest {
         assertEquals(Instant.parse("2026-10-20T13:40:00Z"), plan.departure)
         // Block duration is 12h 15m -> 2026-10-21T01:55:00Z (09:55 next day in Shanghai)
         assertEquals(Instant.parse("2026-10-21T01:55:00Z"), plan.arrival)
-        assertTrue(plan.isRealTrajectory)
+        assertFalse(plan.isRealTrajectory)
     }
 
     @Test
@@ -286,7 +286,7 @@ class TrajectoryAndGlobeTest {
         assertEquals("DYG", mu689.destination.iata)
         assertEquals(Instant.parse("2026-10-20T02:00:00Z"), mu689.departure)
         assertEquals(Instant.parse("2026-10-20T04:10:00Z"), mu689.arrival)
-        assertTrue(mu689.isRealTrajectory)
+        assertFalse(mu689.isRealTrajectory)
 
         // 2. CZ3382 DYG -> CAN 2026-10-23 21:40 -> 23:25 Asia/Shanghai
         val cz3382 = TrajectoryCatalog.resolvePlan("CZ3382", "2026-10-23", airports)
@@ -295,7 +295,7 @@ class TrajectoryAndGlobeTest {
         assertEquals("CAN", cz3382.destination.iata)
         assertEquals(Instant.parse("2026-10-23T13:40:00Z"), cz3382.departure)
         assertEquals(Instant.parse("2026-10-23T15:25:00Z"), cz3382.arrival)
-        assertTrue(cz3382.isRealTrajectory)
+        assertFalse(cz3382.isRealTrajectory)
 
         // 3. CZ3085 CAN -> HND 2026-10-25 15:10 CST -> 20:00 JST
         val cz3085 = TrajectoryCatalog.resolvePlan("CZ3085", "2026-10-25", airports)
@@ -304,7 +304,7 @@ class TrajectoryAndGlobeTest {
         assertEquals("HND", cz3085.destination.iata)
         assertEquals(Instant.parse("2026-10-25T07:10:00Z"), cz3085.departure)
         assertEquals(Instant.parse("2026-10-25T11:00:00Z"), cz3085.arrival)
-        assertTrue(cz3085.isRealTrajectory)
+        assertFalse(cz3085.isRealTrajectory)
 
         // 4. EY801 NRT -> AUH 2026-10-30 17:20 JST -> 2026-10-31 00:40 GST
         val ey801 = TrajectoryCatalog.resolvePlan("EY801", "2026-10-30", airports)
@@ -313,7 +313,7 @@ class TrajectoryAndGlobeTest {
         assertEquals("AUH", ey801.destination.iata)
         assertEquals(Instant.parse("2026-10-30T08:20:00Z"), ey801.departure)
         assertEquals(Instant.parse("2026-10-30T20:40:00Z"), ey801.arrival)
-        assertTrue(ey801.isRealTrajectory)
+        assertFalse(ey801.isRealTrajectory)
 
         // 5. DE2553 & EY1042 AUH -> BER 2026-10-31 02:20 GST -> 06:20 CET
         val de2553 = TrajectoryCatalog.resolvePlan("DE2553", "2026-10-31", airports)
@@ -322,7 +322,7 @@ class TrajectoryAndGlobeTest {
         assertEquals("BER", de2553.destination.iata)
         assertEquals(Instant.parse("2026-10-30T22:20:00Z"), de2553.departure)
         assertEquals(Instant.parse("2026-10-31T05:20:00Z"), de2553.arrival)
-        assertTrue(de2553.isRealTrajectory)
+        assertFalse(de2553.isRealTrajectory)
 
         val ey1042 = TrajectoryCatalog.resolvePlan("EY1042", "2026-10-31", airports)
         assertEquals("EY1042", ey1042.number)

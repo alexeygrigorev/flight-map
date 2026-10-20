@@ -1,0 +1,453 @@
+{
+  "flightNumber": "MU689",
+  "originIata": "PVG",
+  "destinationIata": "DYG",
+  "observedDeparture": "2026-09-06T03:39:32.990Z",
+  "points": [
+    {
+      "offsetSeconds": 0.0,
+      "point": {
+        "lat": 32.023564,
+        "lon": 118.931879
+      },
+      "altitudeMeters": 8694.42
+    },
+    {
+      "offsetSeconds": 8.71,
+      "point": {
+        "lat": 32.01835,
+        "lon": 118.912148
+      },
+      "altitudeMeters": 8656.32
+    },
+    {
+      "offsetSeconds": 28.54,
+      "point": {
+        "lat": 32.00647,
+        "lon": 118.867786
+      },
+      "altitudeMeters": 8549.640000000001
+    },
+    {
+      "offsetSeconds": 47.61,
+      "point": {
+        "lat": 31.995026,
+        "lon": 118.825378
+      },
+      "altitudeMeters": 8458.2
+    },
+    {
+      "offsetSeconds": 54.67,
+      "point": {
+        "lat": 31.990372,
+        "lon": 118.809908
+      },
+      "altitudeMeters": 8427.720000000001
+    },
+    {
+      "offsetSeconds": 63.46,
+      "point": {
+        "lat": 31.983529,
+        "lon": 118.790345
+      },
+      "altitudeMeters": 8382.0
+    },
+    {
+      "offsetSeconds": 79.27,
+      "point": {
+        "lat": 31.970306,
+        "lon": 118.75589
+      },
+      "altitudeMeters": 8305.800000000001
+    },
+    {
+      "offsetSeconds": 83.37,
+      "point": {
+        "lat": 31.966782,
+        "lon": 118.746661
+      },
+      "altitudeMeters": 8282.94
+    },
+    {
+      "offsetSeconds": 101.21,
+      "point": {
+        "lat": 31.951734,
+        "lon": 118.707331
+      },
+      "altitudeMeters": 8199.12
+    },
+    {
+      "offsetSeconds": 118.0,
+      "point": {
+        "lat": 31.937485,
+        "lon": 118.670361
+      },
+      "altitudeMeters": 8115.3
+    },
+    {
+      "offsetSeconds": 132.38,
+      "point": {
+        "lat": 31.925262,
+        "lon": 118.638611
+      },
+      "altitudeMeters": 8046.72
+    },
+    {
+      "offsetSeconds": 175.99,
+      "point": {
+        "lat": 31.888376,
+        "lon": 118.542705
+      },
+      "altitudeMeters": 7840.9800000000005
+    },
+    {
+      "offsetSeconds": 184.86,
+      "point": {
+        "lat": 31.880881,
+        "lon": 118.523142
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 187.84,
+      "point": {
+        "lat": 31.878387,
+        "lon": 118.516663
+      },
+      "altitudeMeters": 7795.26
+    },
+    {
+      "offsetSeconds": 193.96,
+      "point": {
+        "lat": 31.873123,
+        "lon": 118.503094
+      },
+      "altitudeMeters": 7795.26
+    },
+    {
+      "offsetSeconds": 201.19,
+      "point": {
+        "lat": 31.867009,
+        "lon": 118.487213
+      },
+      "altitudeMeters": 7795.26
+    },
+    {
+      "offsetSeconds": 309.65,
+      "point": {
+        "lat": 31.776278,
+        "lon": 118.252856
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 327.48,
+      "point": {
+        "lat": 31.7612,
+        "lon": 118.214506
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 346.95,
+      "point": {
+        "lat": 31.744716,
+        "lon": 118.172516
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 360.71,
+      "point": {
+        "lat": 31.733002,
+        "lon": 118.142826
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 367.95,
+      "point": {
+        "lat": 31.727073,
+        "lon": 118.127087
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 382.04,
+      "point": {
+        "lat": 31.717343,
+        "lon": 118.096051
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 407.38,
+      "point": {
+        "lat": 31.70462,
+        "lon": 118.038617
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 426.6,
+      "point": {
+        "lat": 31.695603,
+        "lon": 117.995142
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 446.45,
+      "point": {
+        "lat": 31.686172,
+        "lon": 117.949865
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 466.36,
+      "point": {
+        "lat": 31.67675,
+        "lon": 117.904395
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 486.29,
+      "point": {
+        "lat": 31.667404,
+        "lon": 117.859174
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 506.28,
+      "point": {
+        "lat": 31.657989,
+        "lon": 117.813647
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 526.22,
+      "point": {
+        "lat": 31.648539,
+        "lon": 117.767944
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 546.04,
+      "point": {
+        "lat": 31.63916,
+        "lon": 117.722814
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 565.81,
+      "point": {
+        "lat": 31.629732,
+        "lon": 117.677417
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 584.73,
+      "point": {
+        "lat": 31.620758,
+        "lon": 117.634385
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 603.63,
+      "point": {
+        "lat": 31.61174,
+        "lon": 117.591032
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 616.49,
+      "point": {
+        "lat": 31.606037,
+        "lon": 117.561951
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 635.68,
+      "point": {
+        "lat": 31.598236,
+        "lon": 117.517952
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 655.15,
+      "point": {
+        "lat": 31.590363,
+        "lon": 117.473629
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 674.82,
+      "point": {
+        "lat": 31.582342,
+        "lon": 117.428577
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 694.78,
+      "point": {
+        "lat": 31.574242,
+        "lon": 117.383203
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 714.71,
+      "point": {
+        "lat": 31.566188,
+        "lon": 117.337885
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 734.38,
+      "point": {
+        "lat": 31.558181,
+        "lon": 117.293115
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 754.36,
+      "point": {
+        "lat": 31.550081,
+        "lon": 117.247742
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 774.13,
+      "point": {
+        "lat": 31.542167,
+        "lon": 117.202808
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 794.12,
+      "point": {
+        "lat": 31.5343,
+        "lon": 117.157764
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 813.64,
+      "point": {
+        "lat": 31.526413,
+        "lon": 117.113558
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 833.6,
+      "point": {
+        "lat": 31.518356,
+        "lon": 117.068428
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 853.51,
+      "point": {
+        "lat": 31.510391,
+        "lon": 117.023513
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 873.19,
+      "point": {
+        "lat": 31.502458,
+        "lon": 116.979126
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 890.12,
+      "point": {
+        "lat": 31.49556,
+        "lon": 116.940631
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 898.49,
+      "point": {
+        "lat": 31.492218,
+        "lon": 116.922159
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 932.97,
+      "point": {
+        "lat": 31.472031,
+        "lon": 116.843962
+      },
+      "altitudeMeters": 7810.5
+    },
+    {
+      "offsetSeconds": 945.03,
+      "point": {
+        "lat": 31.45963,
+        "lon": 116.817792
+      },
+      "altitudeMeters": 7810.5
+    },
+    {
+      "offsetSeconds": 954.92,
+      "point": {
+        "lat": 31.447247,
+        "lon": 116.797302
+      },
+      "altitudeMeters": 7810.5
+    },
+    {
+      "offsetSeconds": 964.13,
+      "point": {
+        "lat": 31.435043,
+        "lon": 116.778636
+      },
+      "altitudeMeters": 7810.5
+    },
+    {
+      "offsetSeconds": 978.73,
+      "point": {
+        "lat": 31.415314,
+        "lon": 116.748316
+      },
+      "altitudeMeters": 7802.88
+    },
+    {
+      "offsetSeconds": 993.45,
+      "point": {
+        "lat": 31.395538,
+        "lon": 116.717888
+      },
+      "altitudeMeters": 7802.88
+    }
+  ],
+  "source": "adsb.lol \u00b7 ADS-B observations",
+  "sourceUrl": "https://github.com/adsblol/globe_history_2026/releases/tag/v2026.09.06-planes-readsb-prod-0",
+  "license": "ODbL-1.0",
+  "coverageComplete": false,
+  "coverageNote": "Partial receiver coverage; first/last observations are not takeoff/landing or gate events"
+}

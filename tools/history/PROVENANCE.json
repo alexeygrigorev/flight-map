@@ -1,0 +1,22 @@
+{
+  "retrievedUtc": "2026-10-20",
+  "flightNumber": "MU689",
+  "operatingFlight": "FM7225 / CSH7225",
+  "route": "PVG-DYG",
+  "registration": "B-1740",
+  "icao24": "780d54",
+  "identitySources": ["https://planefinder.net/data/flight/FM7225", "https://api.adsbdb.com/v0/aircraft/B-1740"],
+  "archive": "https://github.com/adsblol/globe_history_2026/releases/tag/v2026.09.06-planes-readsb-prod-0",
+  "asset": "v2026.09.06-planes-readsb-prod-0.tar.aa",
+  "member": "traces/54/trace_full_780d54.json",
+  "rawGzipSha256": "0bde73c8e1213ecaa36df23ce45e12dbcb6a3e2b220cde4ddb25656ab45c9d58",
+  "license": "ODbL-1.0",
+  "licenseUrl": "https://opendatacommons.org/licenses/odbl/1-0/",
+  "attribution": "adsb.lol and its contributing ADS-B receiver operators; processed by Flight Map",
+  "selectedUtc": ["2026-09-06T03:39:32.990Z", "2026-09-06T03:56:06.440Z"],
+  "selectedPointCount": 55,
+  "selection": "First contiguous CSH7225 segment, excluding initial observation before callsign confirmation and next flight after multi-hour reception gap",
+  "altitude": "Source barometric altitude feet converted to metres with factor 0.3048; pressure altitude, not height above terrain",
+  "coverage": "Partial Nanjing-Hefei receiver coverage only. No PVG departure turn or DYG arrival turn. Neither takeoff/landing nor gate events observed. Never replayed as whole flight.",
+  "reproduction": "python3 tools/history/import_readsb.py tools/history/mu689-20260906-readsb.json.gz --callsign CSH7225 --start 2026-09-06T03:39:32Z --end 2026-09-06T03:56:07Z --number MU689 --origin PVG --destination DYG --source-url https://github.com/adsblol/globe_history_2026/releases/tag/v2026.09.06-planes-readsb-prod-0 --output app/src/main/assets/data/history/MU689-PVG-DYG.json"
+}

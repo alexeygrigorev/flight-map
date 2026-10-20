@@ -3,6 +3,7 @@ package com.flightmap.app
 import com.flightmap.core.Airport
 import com.flightmap.core.FlightPlan
 import com.flightmap.core.GeoPoint
+import com.flightmap.core.HistoricalTrack
 import com.flightmap.core.TrajectoryCatalog
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
@@ -112,9 +113,23 @@ object FlightPackImport {
 
         val departure = parseInstant(obj, "departure", "departureLocal", origin.timezone)
         val arrival = parseInstant(obj, "arrival", "arrivalLocal", dest.timezone)
-        return TrajectoryCatalog.enrichPlan(
-            FlightPlan(number.trim().uppercase(), origin, dest, departure, arrival)
+        val gson = FlightPackCodec.createGson()
+        val history = obj.get("historicalTrack")?.takeUnless { it.isJsonNull }?.let {
+            gson.fromJson(it, HistoricalTrack::class.java)
+        }
+        val waypoints = obj.getAsJsonArray("waypoints")?.map { gson.fromJson(it, GeoPoint::class.java) }
+        val plan = FlightPlan(
+            number.trim().uppercase(), origin, dest, departure, arrival,
+            waypoints = waypoints,
+            routeSource = if (waypoints != null) "USER_SUPPLIED_ROUTE" else null,
+            routeLabel = if (waypoints != null) "User supplied route · unverified" else null,
+            historicalTrack = history,
+            actualTakeoff = obj.get("actualTakeoff")?.takeUnless { it.isJsonNull }?.asString?.let(Instant::parse),
+            landedAt = obj.get("landedAt")?.takeUnless { it.isJsonNull }?.asString?.let(Instant::parse),
+            estimatedAirborneMinutes = obj.get("estimatedAirborneMinutes")?.takeUnless { it.isJsonNull }?.asInt
         )
+        require(history == null || history.identifies(plan)) { "Historical track is invalid or belongs to another flight" }
+        return TrajectoryCatalog.enrichPlan(plan)
     }
 
     private fun resolveAirport(
