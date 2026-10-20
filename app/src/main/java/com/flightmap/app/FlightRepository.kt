@@ -258,13 +258,12 @@ class FlightRepository(private val context: Context) {
         var track = plan.historicalTrack?.takeIf { it.identifies(plan) } ?: runCatching {
             gson.fromJson(File(historyDirectory, "$key.json").readText(), HistoricalTrack::class.java)
         }.getOrNull()?.takeIf { it.identifies(plan) }
-        if (track == null) {
-            track = runCatching {
-                context.assets.open("data/history/$key.json").bufferedReader().use {
-                    gson.fromJson(it, HistoricalTrack::class.java)
-                }
-            }.getOrNull()?.takeIf { it.identifies(plan) }
-        }
+        val bundled = runCatching {
+            context.assets.open("data/history/$key.json").bufferedReader().use {
+                gson.fromJson(it, HistoricalTrack::class.java)
+            }
+        }.getOrNull()?.takeIf { it.identifies(plan) }
+        track = preferredHistory(plan, track, bundled)
         // Only published, explicitly curated history is fetched. Never treat an airport lookup as a track.
         if (refresh && key == "MU689-PVG-DYG") {
             val downloaded = runCatching {
@@ -288,7 +287,7 @@ class FlightRepository(private val context: Context) {
             }.getOrNull()?.takeIf { it.identifies(plan) }
             coroutineContext.ensureActive()
             // Do not replace a more complete cached user observation with a partial catalog capture.
-            if (downloaded != null && (track == null || downloaded.matches(plan) || !track.matches(plan))) track = downloaded
+            track = preferredHistory(plan, track, downloaded)
         }
         track?.let { cacheHistory(plan, it) }
         TrajectoryCatalog.enrichPlan(plan.copy(historicalTrack = track))
@@ -297,6 +296,13 @@ class FlightRepository(private val context: Context) {
     private fun historyKey(plan: FlightPlan): String =
         "${TrajectoryCatalog.normalizeFlightNumber(plan.number)}-${plan.origin.iata}-${plan.destination.iata}"
             .replace(Regex("[^A-Za-z0-9_-]"), "_")
+
+    private fun preferredHistory(plan: FlightPlan, existing: HistoricalTrack?, candidate: HistoricalTrack?): HistoricalTrack? {
+        if (candidate == null) return existing
+        if (existing == null) return candidate
+        if (existing.matches(plan) != candidate.matches(plan)) return if (candidate.matches(plan)) candidate else existing
+        return if (candidate.observedDeparture > existing.observedDeparture) candidate else existing
+    }
 
     private suspend fun cacheHistory(plan: FlightPlan, track: HistoricalTrack) = fileMutex.withLock {
         check(historyDirectory.isDirectory || historyDirectory.mkdirs()) { "Cannot create history cache" }

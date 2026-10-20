@@ -15,16 +15,22 @@ def instant(value):
 def convert(data, callsign, start, end, number, origin, destination, url, complete=False):
     rows = []
     active = None
+    previous_offset = None
     for row in data['trace']:
+        if previous_offset is not None and row[0] - previous_offset > 1800:
+            active = None  # Never carry a stale callsign across an unobserved leg.
+        previous_offset = row[0]
         details = row[8] if len(row) > 8 else None
         if details and details.get('flight'):
             active = details['flight'].strip()
         timestamp = data['timestamp'] + row[0]
         if start <= timestamp <= end and active == callsign:
-            if len(row) > 9 and row[9] != 'adsb_icao':
+            if len(row) <= 9 or row[9] != 'adsb_icao':
                 raise ValueError('Selected observation is not ADS-B ICAO; use an appropriate source label')
             if rows and timestamp <= rows[-1][0]:
                 raise ValueError('Observation timestamps must strictly increase')
+            if rows and timestamp - rows[-1][0] > 1800:
+                raise ValueError('Select a single contiguous flight leg, not multiple observations across a gap')
             altitude = row[3] * 0.3048 if isinstance(row[3], (float, int)) else None
             rows.append((timestamp, row[1], row[2], altitude))
     if len(rows) < 2:

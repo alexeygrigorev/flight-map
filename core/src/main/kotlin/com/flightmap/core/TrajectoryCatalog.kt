@@ -135,11 +135,13 @@ object TrajectoryCatalog {
 
     private val pvgDygWaypoints: List<Pair<String, GeoPoint>> = listOf(
         "PVG · Shanghai Pudong" to GeoPoint(31.1434, 121.8050),
-        "HGH · Hangzhou / Lake Tai" to GeoPoint(30.3500, 120.1500),
-        "JDZ · Huangshan / Jingdezhen" to GeoPoint(29.6500, 117.2000),
-        "KHN · Nanchang / Poyang Lake" to GeoPoint(28.8500, 115.9000),
-        "CSX · Changsha / Xiang River" to GeoPoint(28.3500, 113.2000),
-        "CGD · Changde / Dongting Lake" to GeoPoint(29.0200, 111.6800),
+        // Intermediate geography follows the partial open CSH7225 captures (see tools/history).
+        // Links outside receiver coverage remain estimates, including both airport turns.
+        "NKG · Nanjing corridor estimate" to GeoPoint(32.023564, 118.931879),
+        "HFE · Hefei corridor estimate" to GeoPoint(31.395538, 116.717888),
+        "WUH · Wuhan corridor estimate" to GeoPoint(30.6000, 114.3000),
+        "JZH · Jingzhou corridor estimate" to GeoPoint(29.7000, 112.2000),
+        "DYG · Wuling approach corridor estimate" to GeoPoint(29.2500, 111.0000),
         "DYG · Zhangjiajie Hehua" to GeoPoint(29.1048, 110.4428)
     )
 
@@ -198,14 +200,14 @@ object TrajectoryCatalog {
         FiledScheduleTemplate(
             flightNumber = "MU689",
             airline = "China Eastern",
-            aircraft = "Airbus A320",
+            aircraft = "Boeing 737 family (varies)",
             originIata = "PVG",
             destinationIata = "DYG",
             departureLocal = LocalTime.of(10, 0),
             arrivalLocal = LocalTime.of(12, 10),
             arrivalDayOffset = 0,
             routeSource = "ESTIMATED_CORRIDOR",
-            routeLabel = "Estimated corridor · Yangtze–Wulingyuan Corridor",
+            routeLabel = "Estimated corridor · Nanjing–Hefei–Wulingyuan",
             waypoints = pvgDygWaypoints
         ),
         FiledScheduleTemplate(
