@@ -8,6 +8,8 @@ import kotlin.math.roundToInt
 
 /** Shared wording for the screen and ongoing flight card. All positions remain estimates. */
 object FlightPresentation {
+    fun identity(plan: FlightPlan): String = listOf(plan.number, plan.origin.iata, plan.destination.iata, plan.departure.toString(), plan.arrival.toString()).joinToString("|")
+
     fun route(plan: FlightPlan) = "${plan.origin.iata} → ${plan.destination.iata}"
 
     fun status(progress: FlightProgress, confirmedLanded: Boolean = false): String = when (progress.phase) {

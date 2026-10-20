@@ -103,8 +103,7 @@ class FlightNotificationService : Service() {
         val arrived = progress.phase == "ARRIVED"
         val open = PendingIntent.getActivity(this, 200, Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            putExtra("open_flight_number", plan.number)
-            putExtra("open_flight_departure", plan.departure.toString())
+            putExtra("open_flight_key", FlightPresentation.identity(plan))
         }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val stop = PendingIntent.getService(this, 201, Intent(this, FlightNotificationService::class.java).setAction(STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)

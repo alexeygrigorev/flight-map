@@ -89,10 +89,10 @@ class MainActivity : ComponentActivity() {
                 val activeIntent = pendingIntent
                 LaunchedEffect(activeIntent, vm.loaded) {
                     if (!vm.loaded || activeIntent == null) return@LaunchedEffect
-                    val notifiedNumber = activeIntent.getStringExtra("open_flight_number")
-                    if (notifiedNumber != null) {
-                        vm.openNotifiedFlight(notifiedNumber, activeIntent.getStringExtra("open_flight_departure").orEmpty())
-                        activeIntent.removeExtra("open_flight_number")
+                    val notifiedKey = activeIntent.getStringExtra("open_flight_key")
+                    if (notifiedKey != null) {
+                        vm.openNotifiedFlight(notifiedKey)
+                        activeIntent.removeExtra("open_flight_key")
                         pendingIntent = null
                         return@LaunchedEffect
                     }

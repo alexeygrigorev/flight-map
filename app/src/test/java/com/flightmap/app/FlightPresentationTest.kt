@@ -65,6 +65,8 @@ class FlightPresentationTest {
     @Test fun timingEditsKeepPackIdentityAndHistoricalMetadata() {
         val updated = plan.copy(actualTakeoff = departure.plusSeconds(1800), landedAt = departure.plusSeconds(7800))
         assertTrue(isSameFlight(plan, updated))
+        assertEquals(FlightPresentation.identity(plan), FlightPresentation.identity(updated))
+        assertNotEquals(FlightPresentation.identity(plan), FlightPresentation.identity(plan.copy(arrival = plan.arrival.plusSeconds(60))))
         val restored = FlightPackCodec.createGson().fromJson(FlightPackCodec.createGson().toJson(updated), FlightPlan::class.java)
         assertEquals(updated, restored)
     }

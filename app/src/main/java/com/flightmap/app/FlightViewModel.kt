@@ -478,8 +478,8 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         MapLibre.setConnected(true)
     }
 
-    fun openNotifiedFlight(number: String, departure: String) {
-        val selected = packs.firstOrNull { it.plan.number == number && it.plan.departure.toString() == departure } ?: return
+    fun openNotifiedFlight(key: String) {
+        val selected = packs.firstOrNull { FlightPresentation.identity(it.plan) == key } ?: return
         selectPack(selected)
         fly()
     }
