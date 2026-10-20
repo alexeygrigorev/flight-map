@@ -5,6 +5,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
+import java.security.MessageDigest
 
 /** A published timetable entry, never an aircraft observation or a flight-status claim. */
 data class OfflineScheduledFlight(
@@ -26,7 +27,8 @@ data class PreparedFlightContext(
     val flights: List<OfflineScheduledFlight>,
     val windowStart: Instant,
     val windowEnd: Instant,
-    val catalogVersion: Int = 1
+    val catalogVersion: Int = 1,
+    val planKey: String = ""
 )
 
 data class EstimatedAircraft(
@@ -47,6 +49,22 @@ data class EstimatedAircraft(
 object OfflineFlightContext {
     private val chinaZone = ZoneId.of("Asia/Shanghai")
     private const val SCHEDULE_SOURCE = "https://zbordirect.com/en/tools/schedule?departure_city=SHA&arrival_city=CSX"
+
+    /** Reuse preparation output only for precisely the same route and playback window. */
+    fun forPlan(plan: FlightPlan, saved: PreparedFlightContext?): PreparedFlightContext =
+        saved?.takeIf { it.catalogVersion == 1 && it.planKey == planKey(plan) } ?: prepare(plan)
+
+    private fun planKey(plan: FlightPlan): String {
+        val input = buildString {
+            append(plan.number); append('|'); append(plan.origin.iata); append('|'); append(plan.destination.iata)
+            append('|'); append(plan.departure); append('|'); append(plan.arrival)
+            for (point in plan.effectiveWaypoints) {
+                append('|'); append(point.lat); append(','); append(point.lon)
+            }
+        }
+        return MessageDigest.getInstance("SHA-256").digest(input.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it.toInt() and 255) }
+    }
 
     /** Published daily summer timetable, 17 September through 24 October 2026 inclusive.
      * Airport points: bundled OurAirports dataset. Equipment is scheduled, not observed.
@@ -83,7 +101,8 @@ object OfflineFlightContext {
             City(peak.id, peak.name, "", peak.point, "UTC", 0)
         }
         val ids = GreatCircle.corridorCities(plan, peakCities, 200.0).map { it.id }.toSet()
-        return PreparedFlightContext(IfeCatalog.mountainPeaks.filter { it.id in ids }, flights, start, end)
+        return PreparedFlightContext(IfeCatalog.mountainPeaks.filter { it.id in ids }, flights, start, end,
+            planKey = planKey(plan))
     }
 
     // One-minute synchronized samples, with 50 km margin beyond the displayed 150 km radius.

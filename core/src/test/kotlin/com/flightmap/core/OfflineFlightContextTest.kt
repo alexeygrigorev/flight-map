@@ -79,6 +79,16 @@ class OfflineFlightContextTest {
             destination = dyg.copy(point = GeoPoint(-35.0, -60.0)))).peaks.isEmpty())
     }
 
+    @Test fun savedContextIsInvalidatedWhenPlanRouteOrClockChanges() {
+        val saved = OfflineFlightContext.prepare(plan)
+        assertSame(saved, OfflineFlightContext.forPlan(plan, saved))
+        val changedClock = plan.copy(departure = plan.departure.plusSeconds(3600), arrival = plan.arrival.plusSeconds(3600))
+        assertNotEquals(saved.planKey, OfflineFlightContext.forPlan(changedClock, saved).planKey)
+        val changedRoute = plan.copy(waypoints = listOf(plan.origin.point, GeoPoint(45.0, 120.0), plan.destination.point))
+        assertNotEquals(saved.planKey, OfflineFlightContext.forPlan(changedRoute, saved).planKey)
+        assertEquals(saved, OfflineFlightContext.forPlan(plan, saved.copy(catalogVersion = 0)))
+    }
+
     @Test fun estimatedAircraftLayoutRespectsSharedCollisionBoxes() {
         val time = plan.departure.plusSeconds(2700)
         val progress = FlightTiming.progress(plan, time)
