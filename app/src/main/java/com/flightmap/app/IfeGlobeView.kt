@@ -475,7 +475,9 @@ fun IfeGlobeView(
                             }
 
                             for (plannedPeak in layout.peaks) {
-                                val d = hypot(plannedPeak.x - lastPos.x, plannedPeak.y - lastPos.y)
+                                val box = plannedPeak.box
+                                val onLabel = lastPos.x in box.left..box.right && lastPos.y in box.top..box.bottom
+                                val d = if (onLabel) 0f else hypot(plannedPeak.x - lastPos.x, plannedPeak.y - lastPos.y)
                                 if (d < bestDistPx) {
                                     bestDistPx = d
                                     bestFeature = SelectedGlobeFeature.PeakFeature(plannedPeak.peak)

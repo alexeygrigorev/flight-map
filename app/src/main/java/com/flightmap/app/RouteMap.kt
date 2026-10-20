@@ -54,11 +54,17 @@ fun RouteMap(pack: FlightPack, progress: FlightProgress, modifier: Modifier = Mo
     var followPlane by remember { mutableStateOf(false) }
     var headingUp by remember { mutableStateOf(false) }
     var selectedCity by remember { mutableStateOf<City?>(null) }
+    var selectedContext by remember { mutableStateOf<Pair<String, String>?>(null) }
+    val offlineContext = remember(pack.plan) { OfflineFlightContext.prepare(pack.plan) }
 
     val flightTime = remember(progress.fraction, pack.plan) {
         val totalMs = Duration.between(pack.plan.departure, pack.plan.arrival).toMillis()
         pack.plan.departure.plusMillis((totalMs * progress.fraction).toLong())
     }
+    val nearbyAircraft = remember(offlineContext, flightTime, progress.point) {
+        OfflineFlightContext.nearby(offlineContext, flightTime, progress.point)
+    }
+    val currentAircraft by rememberUpdatedState(nearbyAircraft)
 
     val view = remember {
         MapView(
@@ -87,7 +93,7 @@ fun RouteMap(pack: FlightPack, progress: FlightProgress, modifier: Modifier = Mo
                 }
             }
             m.setStyle(Style.Builder().fromJson(OfflineMaps.styleJson(context))) { style ->
-                val route = GreatCircle.route(pack.plan.origin.point, pack.plan.destination.point)
+                val route = GreatCircle.routeWaypoints(pack.plan.effectiveWaypoints)
                 // Break lines crossing the date line to avoid a false line across the world.
                 val parts = mutableListOf<MutableList<Point>>(mutableListOf())
                 route.forEachIndexed { i, p ->
@@ -121,11 +127,48 @@ fun RouteMap(pack: FlightPack, progress: FlightProgress, modifier: Modifier = Mo
 
                 m.addOnMapClickListener { latLng ->
                     val clickPt = GeoPoint(latLng.latitude, latLng.longitude)
-                    val candidate = selected.minByOrNull { GreatCircle.distanceKm(it.point, clickPt) }
-                        ?.takeIf { GreatCircle.distanceKm(it.point, clickPt) <= 150.0 }
-                    selectedCity = candidate
+                    val screen = m.projection.toScreenLocation(latLng)
+                    fun hit(point: GeoPoint): Boolean {
+                        val projected = m.projection.toScreenLocation(LatLng(point.lat, point.lon))
+                        return kotlin.math.hypot((projected.x - screen.x).toDouble(),
+                            (projected.y - screen.y).toDouble()) <= 32 * context.resources.displayMetrics.density
+                    }
+                    val aircraft = currentAircraft.firstOrNull { hit(it.point) }
+                    val peak = offlineContext.peaks.takeIf { m.cameraPosition.zoom >= 3.0 }
+                        ?.firstOrNull { hit(it.point) }
+                    if (aircraft != null) {
+                        selectedCity = null
+                        selectedContext = aircraft.schedule.number to (
+                            "${aircraft.schedule.originCode} → ${aircraft.schedule.destinationCode}\n" +
+                                "${aircraft.evidenceLabel}\n\nAirport-to-airport great-circle estimate from " +
+                                "scheduled block time (includes taxi). Actual operation and route unverified.\n\n" +
+                                "Source checked ${aircraft.schedule.sourceCheckedOn}: ${aircraft.schedule.sourceUrl}")
+                    } else if (peak != null) {
+                        selectedCity = null
+                        selectedContext = peak.name to "${peak.elevationM} m · ${peak.region}\n\n${peak.fact}"
+                    } else {
+                        val candidate = selected.minByOrNull { GreatCircle.distanceKm(it.point, clickPt) }
+                            ?.takeIf { GreatCircle.distanceKm(it.point, clickPt) <= 150.0 }
+                        selectedCity = candidate
+                    }
                     true
                 }
+
+                offlineContext.peaks.forEachIndexed { index, peak ->
+                    style.addImage("peak-$index", labelPillBitmap("▲ ${peak.name}", "${peak.elevationM} m"))
+                    style.addSource(GeoJsonSource("peak-$index", peak.point.mapPoint()))
+                    style.addLayer(SymbolLayer("peak-$index", "peak-$index").apply { minZoom = 3.0f }
+                        .withProperties(iconImage("peak-$index"), iconSize(0.62f), iconAnchor(Property.ICON_ANCHOR_BOTTOM)))
+                }
+                style.addImage("estimated-plane", planeBitmap(android.graphics.Color.rgb(255, 197, 117)))
+                style.addSource(GeoJsonSource("estimated-aircraft", FeatureCollection.fromFeatures(emptyList())))
+                style.addLayer(SymbolLayer("estimated-aircraft", "estimated-aircraft").withProperties(
+                    iconImage("estimated-plane"), iconSize(0.40f), iconOpacity(0.65f),
+                    iconRotate(org.maplibre.android.style.expressions.Expression.get("heading")),
+                    textField(org.maplibre.android.style.expressions.Expression.get("label")),
+                    textColor("#FFC575"), textSize(12f), textOffset(arrayOf(0f, 1.5f)),
+                    textHaloColor("#0B1420"), textHaloWidth(1.5f)
+                ))
 
                 selected.forEachIndexed { index, city ->
                     val isOrigin = index == 0
@@ -211,8 +254,15 @@ fun RouteMap(pack: FlightPack, progress: FlightProgress, modifier: Modifier = Mo
         }
     }
 
-    LaunchedEffect(styleReady, progress.point, progress.heading, followPlane, headingUp) {
+    LaunchedEffect(styleReady, progress.point, progress.heading, followPlane, headingUp, nearbyAircraft) {
         if (styleReady) map?.style?.let { style ->
+            val estimates = nearbyAircraft.map { aircraft ->
+                Feature.fromGeometry(aircraft.point.mapPoint()).apply {
+                    addStringProperty("label", "${aircraft.schedule.number} · est.")
+                    addNumberProperty("heading", aircraft.heading)
+                }
+            }
+            style.getSourceAs<GeoJsonSource>("estimated-aircraft")?.setGeoJson(FeatureCollection.fromFeatures(estimates))
             style.getSourceAs<GeoJsonSource>("plane")?.setGeoJson(progress.point.mapPoint())
             style.getLayerAs<SymbolLayer>("plane")?.setProperties(iconRotate(progress.heading.toFloat()))
 
@@ -369,6 +419,12 @@ fun RouteMap(pack: FlightPack, progress: FlightProgress, modifier: Modifier = Mo
             }
         }
     }
+    selectedContext?.let { (title, details) ->
+        AlertDialog(onDismissRequest = { selectedContext = null }, title = { Text(title) },
+            text = { Text(details) }, confirmButton = {
+                TextButton(onClick = { selectedContext = null }) { Text("Close") }
+            })
+    }
 }
 
 private fun labelPillBitmap(
@@ -437,7 +493,7 @@ private fun labelPillBitmap(
     return bitmap
 }
 
-private fun planeBitmap(): Bitmap {
+private fun planeBitmap(colorValue: Int = android.graphics.Color.rgb(246, 246, 240)): Bitmap {
     val bitmap = Bitmap.createBitmap(88, 88, Bitmap.Config.ARGB_8888)
     val path = Path().apply {
         moveTo(44f, 4f); lineTo(50f, 12f); lineTo(51f, 34f); lineTo(80f, 55f); lineTo(80f, 63f)
@@ -445,7 +501,7 @@ private fun planeBitmap(): Bitmap {
         lineTo(28f, 84f); lineTo(28f, 79f); lineTo(38f, 71f); lineTo(37f, 50f); lineTo(8f, 63f)
         lineTo(8f, 55f); lineTo(37f, 34f); lineTo(38f, 12f); close()
     }
-    Canvas(bitmap).drawPath(path, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.rgb(246, 246, 240); setShadowLayer(4f, 0f, 2f, android.graphics.Color.BLACK) })
+    Canvas(bitmap).drawPath(path, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = colorValue; setShadowLayer(4f, 0f, 2f, android.graphics.Color.BLACK) })
     return bitmap
 }
 

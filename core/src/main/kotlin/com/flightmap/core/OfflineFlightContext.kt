@@ -58,7 +58,7 @@ object OfflineFlightContext {
                 date.atTime(LocalTime.parse(dep)).atZone(chinaZone).toInstant(),
                 date.atTime(LocalTime.parse(arr)).atZone(chinaZone).toInstant(), equipment, SCHEDULE_SOURCE)
         return listOf(
-            entry("MU5323", "SHA", GeoPoint(31.1981, 121.3360), "09:45", "11:40", "Scheduled Airbus A321"),
+            entry("MU5323", "SHA", GeoPoint(31.1981, 121.33426), "09:45", "11:40", "Scheduled Airbus A321"),
             entry("FM9393", "PVG", GeoPoint(31.1434, 121.8050), "10:25", "12:35", "Scheduled Boeing 737-800")
         )
     }
