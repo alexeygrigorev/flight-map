@@ -873,6 +873,7 @@ private fun FlightScreen(vm: FlightViewModel) {
     }
     var controlsOpen by remember { mutableStateOf(false) }
     var simulationOpen by remember { mutableStateOf(false) }
+    val hasPartialObservations = remember(plan) { plan.partialObservationSegments().isNotEmpty() }
 
     BackHandler { vm.edit() }
 
@@ -916,6 +917,20 @@ private fun FlightScreen(vm: FlightViewModel) {
                 .widthIn(max = 880.dp),
             horizontalAlignment = Alignment.End
         ) {
+            if (hasPartialObservations) {
+                Surface(
+                    onClick = { controlsOpen = true },
+                    color = Ink.copy(alpha = .94f),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.padding(end = 4.dp, bottom = 4.dp)
+                ) {
+                    Text(
+                        "Pink: historical observations · ${plan.historicalTrack?.observedDeparture.toString().take(10)} · partial",
+                        color = Color(0xFFF9A8D4), fontSize = 10.sp, lineHeight = 14.sp,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+                    )
+                }
+            }
             Surface(
                 color = Color(0x99081218),
                 shape = RoundedCornerShape(8.dp),

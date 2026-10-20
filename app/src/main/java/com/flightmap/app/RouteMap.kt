@@ -107,6 +107,14 @@ fun RouteMap(pack: FlightPack, progress: FlightProgress, modifier: Modifier = Mo
                 style.addSource(GeoJsonSource("route", MultiLineString.fromLngLats(parts.filter { it.size > 1 })))
                 style.addLayer(LineLayer("route-shadow", "route").withProperties(lineColor("#8DE0C6"), lineWidth(8f), lineOpacity(0.12f)))
                 style.addLayer(LineLayer("route-line", "route").withProperties(lineColor("#8DE0C6"), lineWidth(2.2f), lineOpacity(0.95f)))
+                val observedSegments = pack.plan.partialObservationSegments()
+                if (observedSegments.isNotEmpty()) {
+                    style.addSource(GeoJsonSource("partial-observations", MultiLineString.fromLngLats(
+                        observedSegments.map { segment -> segment.map { it.mapPoint() } }
+                    )))
+                    style.addLayer(LineLayer("partial-observations-line", "partial-observations")
+                        .withProperties(lineColor("#F9A8D4"), lineWidth(3.0f)))
+                }
                 style.addSource(
                     GeoJsonSource(
                         "ends",

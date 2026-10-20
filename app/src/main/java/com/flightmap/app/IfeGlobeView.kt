@@ -179,6 +179,7 @@ fun IfeGlobeView(
     val offlineContext = remember(pack.plan, pack.offlineContext) {
         OfflineFlightContext.forPlan(pack.plan, pack.offlineContext)
     }
+    val partialObservations = remember(pack.plan) { pack.plan.partialObservationSegments() }
     val nearbyAircraft = remember(offlineContext, flightTime, progress.point) {
         OfflineFlightContext.nearby(offlineContext, flightTime, progress.point)
     }
@@ -542,6 +543,7 @@ fun IfeGlobeView(
 
                 // 5. Planned/filed trajectory ribbon (flown trail + remaining airway + waypoint fixes + endpoint markers)
                 drawTrajectoryRibbon(canvas, projection, pack.plan, progress, sceneLayout.endpoints)
+                drawPartialObservations(canvas, projection, partialObservations)
 
                 // 6. Decluttered, collision-free country names, mountain peaks, cities, and landmark pins
                 drawPlannedCountries(canvas, sceneLayout.countries)
@@ -1414,6 +1416,29 @@ private fun drawPlannedPins(
         canvas.drawRect(x - 5f, cy - 2.8f, x - 0.8f, cy + 5f, iconPaint)
         canvas.drawRect(x - 0.8f, cy - 6f, x + 3.2f, cy + 5f, iconPaint)
         canvas.drawLine(x + 5f, cy - 1f, x + 5f, cy + 5f, iconPaint)
+    }
+}
+
+private fun drawPartialObservations(canvas: Canvas, proj: GlobeProjection, segments: List<List<GeoPoint>>) {
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.rgb(249, 168, 212)
+        style = Paint.Style.STROKE
+        strokeWidth = 4.5f
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+        setShadowLayer(2f, 0f, 1f, android.graphics.Color.BLACK)
+    }
+    for (segment in segments) {
+        val path = Path()
+        var penDown = false
+        for (point in segment) {
+            val projected = proj.project(point)
+            if (!projected.visible) { penDown = false; continue }
+            if (penDown) path.lineTo(projected.x, projected.y)
+            else path.moveTo(projected.x, projected.y)
+            penDown = true
+        }
+        canvas.drawPath(path, paint)
     }
 }
 

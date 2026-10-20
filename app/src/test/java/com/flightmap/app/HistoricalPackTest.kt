@@ -30,6 +30,10 @@ class HistoricalPackTest {
         assertFalse(plan.isRealTrajectory)
         assertTrue(plan.effectiveRouteLabel.contains("partial history"))
         assertEquals("ODbL-1.0", history.license)
+        val overlay = plan.partialObservationSegments().flatten()
+        assertEquals(history.points.map { it.point }, overlay)
+        assertFalse(overlay.contains(origin.point))
+        assertFalse(overlay.contains(destination.point))
     }
 
     @Test fun codecAndEnvelopeRoundTripKeepHistoricalProvenanceAndUserTimes() {

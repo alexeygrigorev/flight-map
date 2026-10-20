@@ -63,3 +63,21 @@ data class HistoricalTrack(
         GreatCircle.distanceKm(points.first().point, plan.origin.point) <= 30.0 &&
         GreatCircle.distanceKm(points.last().point, plan.destination.point) <= 30.0
 }
+
+/** Dated partial evidence only: no airport connectors and no lines across receiver gaps. */
+fun FlightPlan.partialObservationSegments(): List<List<GeoPoint>> {
+    val track = historicalTrack?.takeIf { it.identifies(this) && !it.matches(this) } ?: return emptyList()
+    val segments = mutableListOf<List<GeoPoint>>()
+    var segment = mutableListOf<GeoPoint>()
+    track.points.forEachIndexed { index, observation ->
+        val previous = track.points.getOrNull(index - 1)
+        if (previous != null && (observation.offsetSeconds - previous.offsetSeconds > 120.0 ||
+                kotlin.math.abs(observation.point.lon - previous.point.lon) > 180.0)) {
+            if (segment.size >= 2) segments.add(segment)
+            segment = mutableListOf()
+        }
+        segment.add(observation.point)
+    }
+    if (segment.size >= 2) segments.add(segment)
+    return segments
+}

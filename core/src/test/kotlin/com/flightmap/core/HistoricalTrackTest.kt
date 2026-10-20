@@ -77,6 +77,22 @@ class HistoricalTrackTest {
         assertNull(plan.copy(historicalTrack = track.copy(flightNumber = "WRONG")).effectiveHistoricalTrack)
     }
 
+    @Test fun partialOverlayOmitsReceiverGapsAndRejectsMismatchedOrCompleteHistory() {
+        val points = listOf(
+            HistoricalTrackPoint(0.0, GeoPoint(0.0, 0.5)),
+            HistoricalTrackPoint(60.0, GeoPoint(0.1, 0.6)),
+            HistoricalTrackPoint(400.0, GeoPoint(0.2, 0.7)),
+            HistoricalTrackPoint(450.0, GeoPoint(0.3, 0.8)))
+        val partial = track.copy(points = points, coverageComplete = false,
+            observedTakeoff = null, observedLanding = null, observedArrival = null)
+        val p = plan.copy(historicalTrack = partial)
+        assertEquals(listOf(points.take(2).map { it.point }, points.drop(2).map { it.point }), p.partialObservationSegments())
+        assertEquals(listOf(origin.point, destination.point), p.effectiveWaypoints)
+        assertFalse(p.isRealTrajectory)
+        assertTrue(p.copy(historicalTrack = partial.copy(flightNumber = "WRONG")).partialObservationSegments().isEmpty())
+        assertTrue(plan.partialObservationSegments().isEmpty())
+    }
+
     @Test fun missingHistoricalAltitudeIsUnknownRatherThanInvented() {
         val p = plan.copy(historicalTrack = track.copy(points = track.points.map { it.copy(altitudeMeters = null) }))
         assertNull(FlightTiming.progress(p, p.departure.plusSeconds(200)).altitudeMeters)
