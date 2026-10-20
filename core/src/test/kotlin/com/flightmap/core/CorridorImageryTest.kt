@@ -137,27 +137,94 @@ class CorridorImageryTest {
         assertEquals(1.0, CorridorImagery.featherScale(0.5, 0.5, false, true, true, true, true), 1e-9)
     }
 
-    @Test
-    fun featherScaleFadesAtMissingEdge() {
-        // At the very edge of a missing neighbour the imagery vanishes (no hard seam).
-        assertEquals(0.0, CorridorImagery.featherScale(0.0, 0.5, false, true, true, true, true), 1e-9)
-        assertEquals(0.0, CorridorImagery.featherScale(1.0, 0.5, true, false, true, true, true), 1e-9)
-        // Halfway across the feather band the blend is partial and monotonic.
-        val near = CorridorImagery.featherScale(0.25 / 256.0, 0.5, false, true, true, true, true)
-        val mid = CorridorImagery.featherScale(6.0 / 256.0, 0.5, false, true, true, true, true)
-        val far = CorridorImagery.featherScale(11.0 / 256.0, 0.5, false, true, true, true, true)
-        assertTrue("near=$near mid=$mid far=$far", near < mid && mid < far)
-        assertTrue(far < 1.0)
-        assertEquals(1.0, CorridorImagery.featherScale(12.0 / 256.0, 0.5, false, true, true, true, true), 1e-9)
+    // Effective imagery alpha over synthetic cache coverage, as used by the renderer.
+    private fun alpha(x: Double, y: Double, coverage: Set<Pair<Int, Int>>): Double {
+        val tx = kotlin.math.floor(x).toInt()
+        val ty = kotlin.math.floor(y).toInt()
+        fun cached(dx: Int, dy: Int) = (tx + dx to ty + dy) in coverage
+        return 0.8 * CorridorImagery.featherScale(
+            x - tx, y - ty, cached(-1, 0), cached(1, 0), cached(0, -1), cached(0, 1), cached(0, 0),
+            northWest = cached(-1, -1), northEast = cached(1, -1),
+            southWest = cached(-1, 1), southEast = cached(1, 1)
+        )
     }
 
     @Test
-    fun featherSkirtOutsideCoverage() {
-        // Outside cached coverage the outward skirt fades quickly to pure fallback.
-        assertEquals(0.0, CorridorImagery.featherScale(0.5, 0.5, true, true, true, true, false, 12.0), 1e-9)
-        val atEdge = CorridorImagery.featherScale(0.5, 0.5, true, true, true, true, false, 0.0)
-        val outside = CorridorImagery.featherScale(0.5, 0.5, true, true, true, true, false, 6.0)
-        assertEquals(1.0, atEdge, 1e-9)
-        assertTrue("outside=$outside", outside > 0.0 && outside < atEdge)
+    fun effectiveAlphaIsContinuousOnBothSidesOfEveryOuterEdge() {
+        val coverage = setOf(0 to 0)
+        val epsilon = 1e-7
+        // Rotate a west-edge probe to exercise all four edges and their outside samples.
+        val edges: List<(Double) -> Pair<Double, Double>> = listOf(
+            { d -> d to 0.5 }, { d -> 1.0 - d to 0.5 },
+            { d -> 0.5 to d }, { d -> 0.5 to 1.0 - d }
+        )
+        for (edge in edges) {
+            fun at(d: Double): Double {
+                val (x, y) = edge(d)
+                return alpha(x, y, coverage)
+            }
+            assertEquals(0.0, at(-epsilon), 0.0)
+            assertEquals(0.0, at(0.0), 0.0)
+            assertEquals(at(-epsilon), at(epsilon), 1e-9)
+            val width = CorridorImagery.FEATHER_PX / CorridorImagery.TILE_PX
+            assertTrue(at(width / 4) < at(width / 2))
+            assertEquals(0.4, at(width / 2), 1e-9)
+            assertEquals(0.8, at(width), 1e-9)
+            // A broad enough band to soften the high-zoom resolution/color transition.
+            assertTrue(at(12.0 / 256.0) < 0.8)
+        }
+    }
+
+    @Test
+    fun outsideCoverageAlwaysHasZeroEffectiveAlpha() {
+        val coverage = setOf(0 to 0)
+        for (x in listOf(-1.0, -0.01, 0.0, 0.5, 1.0, 1.01, 2.0)) {
+            for (y in listOf(-1.0, -0.01, 0.0, 0.5, 1.0, 1.01, 2.0)) {
+                if (x < 0 || x >= 1 || y < 0 || y >= 1) {
+                    assertEquals("outside ($x, $y)", 0.0, alpha(x, y, coverage), 0.0)
+                }
+            }
+        }
+        assertEquals(0.0, CorridorImagery.featherScale(0.5, 0.5, true, true, true, true, false), 0.0)
+    }
+
+    @Test
+    fun adjacentCachedTilesKeepFullAlphaAcrossSharedEdges() {
+        val epsilon = 1e-7
+        for (coverage in listOf(setOf(0 to 0, 1 to 0), setOf(0 to 0, 0 to 1))) {
+            for (d in listOf(-epsilon, 0.0, epsilon)) {
+                val x = if ((1 to 0) in coverage) 1.0 + d else 0.5
+                val y = if ((0 to 1) in coverage) 1.0 + d else 0.5
+                assertEquals(0.8, alpha(x, y, coverage), 1e-9)
+            }
+        }
+        val block = setOf(0 to 0, 1 to 0, 0 to 1, 1 to 1)
+        assertEquals(0.8, alpha(1.0, 1.0, block), 1e-9)
+    }
+
+    @Test
+    fun convexAndMissingDiagonalCornersFadeContinuously() {
+        val epsilon = 1e-7
+        val block = setOf(0 to 0, 1 to 0, 0 to 1, 1 to 1)
+        // Each missing quadrant creates a concave corner at (1, 1).
+        for (missing in block) {
+            val coverage = block - missing
+            assertEquals(0.0, alpha(1.0, 1.0, coverage), 1e-9)
+            for (dx in listOf(-epsilon, epsilon)) {
+                for (dy in listOf(-epsilon, epsilon)) {
+                    assertEquals(0.0, alpha(1.0 + dx, 1.0 + dy, coverage), 1e-9)
+                }
+            }
+            // Across either cached shared edge near the missing corner, alpha agrees.
+            for (offset in listOf(-0.02, 0.02)) {
+                assertEquals(alpha(1.0 - epsilon, 1.0 + offset, coverage),
+                    alpha(1.0 + epsilon, 1.0 + offset, coverage), 1e-5)
+                assertEquals(alpha(1.0 + offset, 1.0 - epsilon, coverage),
+                    alpha(1.0 + offset, 1.0 + epsilon, coverage), 1e-5)
+            }
+        }
+        val single = setOf(0 to 0)
+        assertEquals(0.0, alpha(epsilon, epsilon, single), 1e-9)
+        assertEquals(0.0, alpha(-epsilon, -epsilon, single), 0.0)
     }
 }

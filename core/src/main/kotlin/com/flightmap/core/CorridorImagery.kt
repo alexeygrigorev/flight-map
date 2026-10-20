@@ -64,16 +64,17 @@ object CorridorImagery {
      * distance from the nearest missing tile so corridor edges never show a
      * hard rectangular seam (see [featherScale]).
      */
-    const val FEATHER_PX = 12.0
+    const val FEATHER_PX = 32.0
 
     /**
      * Coverage-edge feather factor in 0..1 for one imagery sample.
      *
      * Pure math, JVM-testable: [u]/[v] are the fractional position within the
      * current tile (0..1). [west]/[east]/[north]/[south] report whether the
-     * 4-neighbour tiles are cached. When the current tile itself is missing
-     * ([centerPresent] false), [distOutTexels] is the distance in texels from
-     * the nearest cached edge (used for a short outward fade skirt).
+     * cardinal neighbours are cached. Missing diagonal neighbours contribute
+     * distance to their corner, keeping concave coverage corners continuous.
+     * Missing current tiles always have zero alpha: never extend edge texels
+     * outside coverage.
      */
     fun featherScale(
         u: Double,
@@ -83,18 +84,21 @@ object CorridorImagery {
         north: Boolean,
         south: Boolean,
         centerPresent: Boolean,
-        distOutTexels: Double = 0.0
+        northWest: Boolean = true,
+        northEast: Boolean = true,
+        southWest: Boolean = true,
+        southEast: Boolean = true
     ): Double {
-        if (!centerPresent) {
-            if (distOutTexels >= FEATHER_PX) return 0.0
-            val t = (1.0 - distOutTexels / FEATHER_PX).coerceIn(0.0, 1.0)
-            return t * t * (3.0 - 2.0 * t)
-        }
+        if (!centerPresent || u !in 0.0..1.0 || v !in 0.0..1.0) return 0.0
         var d = Double.POSITIVE_INFINITY
         if (!west) d = minOf(d, u * TILE_PX)
         if (!east) d = minOf(d, (1.0 - u) * TILE_PX)
         if (!north) d = minOf(d, v * TILE_PX)
         if (!south) d = minOf(d, (1.0 - v) * TILE_PX)
+        if (!northWest) d = minOf(d, Math.hypot(u, v) * TILE_PX)
+        if (!northEast) d = minOf(d, Math.hypot(1.0 - u, v) * TILE_PX)
+        if (!southWest) d = minOf(d, Math.hypot(u, 1.0 - v) * TILE_PX)
+        if (!southEast) d = minOf(d, Math.hypot(1.0 - u, 1.0 - v) * TILE_PX)
         if (d.isInfinite()) return 1.0
         val t = (d / FEATHER_PX).coerceIn(0.0, 1.0)
         return t * t * (3.0 - 2.0 * t)

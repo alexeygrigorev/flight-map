@@ -614,8 +614,7 @@ private fun decodeImageryTexel(tex: IntArray, u: Double, v: Double): Triple<Int,
  * null when no cached tile covers the position. Near a coverage edge the
  * weight ramps smoothly to zero ([CorridorImagery.featherScale]) so detailed
  * imagery dissolves into the bundled fallback instead of ending in a hard
- * rectangular seam; just outside coverage a short fade skirt is drawn from
- * the nearest cached edge texels.
+ * rectangular seam. Outside coverage the imagery weight stays exactly zero.
  */
 private fun sampleImageryFeathered(
     imagery: ImageryOverlay,
@@ -637,38 +636,17 @@ private fun sampleImageryFeathered(
     val u = (fx - floor(fx)).coerceIn(0.0, 1.0)
     val v = (fy - floor(fy)).coerceIn(0.0, 1.0)
     val tiles = imagery.tiles
-    val center = tiles[CorridorImagery.encodeKey(z, xx, yi)]
-    if (center != null) {
-        val west = tiles.containsKey(CorridorImagery.encodeKey(z, (xx - 1 + n) % n, yi))
-        val east = tiles.containsKey(CorridorImagery.encodeKey(z, (xx + 1) % n, yi))
-        val north = yi > 0 && tiles.containsKey(CorridorImagery.encodeKey(z, xx, yi - 1))
-        val south = yi < n - 1 && tiles.containsKey(CorridorImagery.encodeKey(z, xx, yi + 1))
-        val scale = CorridorImagery.featherScale(u, v, west, east, north, south, true)
-        if (scale <= 0.001) return null
-        val (r, g, b) = decodeImageryTexel(center, u, v)
-        return Quad(r, g, b, (globalAlpha * scale).toFloat().coerceIn(0f, 1f))
-    }
-    // Outside coverage: fade a short skirt in from the nearest cached edge.
-    var bestDist = Double.POSITIVE_INFINITY
-    var bestTex: IntArray? = null
-    var bestU = 0.0
-    var bestV = 0.0
-    fun consider(distTexels: Double, tex: IntArray?, su: Double, sv: Double) {
-        if (tex != null && distTexels < bestDist) {
-            bestDist = distTexels
-            bestTex = tex
-            bestU = su
-            bestV = sv
-        }
-    }
-    consider(u * 256.0, tiles[CorridorImagery.encodeKey(z, (xx - 1 + n) % n, yi)], 1.0, v)
-    consider((1.0 - u) * 256.0, tiles[CorridorImagery.encodeKey(z, (xx + 1) % n, yi)], 0.0, v)
-    if (yi > 0) consider(v * 256.0, tiles[CorridorImagery.encodeKey(z, xx, yi - 1)], u, 1.0)
-    if (yi < n - 1) consider((1.0 - v) * 256.0, tiles[CorridorImagery.encodeKey(z, xx, yi + 1)], u, 0.0)
-    val tex = bestTex ?: return null
-    val scale = CorridorImagery.featherScale(0.5, 0.5, true, true, true, true, false, bestDist)
-    if (scale <= 0.001) return null
-    val (r, g, b) = decodeImageryTexel(tex, bestU, bestV)
+    val center = tiles[CorridorImagery.encodeKey(z, xx, yi)] ?: return null
+    fun cached(dx: Int, dy: Int): Boolean =
+        yi + dy in 0 until n &&
+            tiles.containsKey(CorridorImagery.encodeKey(z, (xx + dx + n) % n, yi + dy))
+    val scale = CorridorImagery.featherScale(
+        u, v, cached(-1, 0), cached(1, 0), cached(0, -1), cached(0, 1), true,
+        northWest = cached(-1, -1), northEast = cached(1, -1),
+        southWest = cached(-1, 1), southEast = cached(1, 1)
+    )
+    if (scale == 0.0) return null
+    val (r, g, b) = decodeImageryTexel(center, u, v)
     return Quad(r, g, b, (globalAlpha * scale).toFloat().coerceIn(0f, 1f))
 }
 
