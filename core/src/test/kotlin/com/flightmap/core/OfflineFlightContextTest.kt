@@ -17,7 +17,7 @@ class OfflineFlightContextTest {
 
     @Test fun publishedValidityHasHardBoundsAndCorrectUtcConversion() {
         assertTrue(OfflineFlightContext.schedulesOn(LocalDate.of(2026, 9, 16)).isEmpty())
-        assertTrue(OfflineFlightContext.schedulesOn(LocalDate.of(2026, 10, 25)).isEmpty())
+        assertTrue(OfflineFlightContext.schedulesOn(LocalDate.of(2026, 11, 1)).isEmpty())
         val schedule = OfflineFlightContext.schedulesOn(LocalDate.of(2026, 10, 24))
         assertEquals(2, schedule.size)
         assertEquals(Instant.parse("2026-10-24T01:45:00Z"), schedule.first().departure)
@@ -64,6 +64,11 @@ class OfflineFlightContextTest {
         val restoredContext = gson.fromJson(gson.toJson(prepared), PreparedFlightContext::class.java)
         assertEquals(prepared, OfflineFlightContext.prepare(restoredPlan))
         assertEquals(prepared, restoredContext)
+        val legacy = gson.fromJson("{\"catalogVersion\":1}", PreparedFlightContext::class.java)
+        assertEquals(prepared, OfflineFlightContext.forPlan(plan, legacy))
+        val missingFields = gson.fromJson("{\"catalogVersion\":2}", PreparedFlightContext::class.java)
+        assertEquals(prepared, OfflineFlightContext.forPlan(plan, missingFields))
+        assertEquals(prepared, OfflineFlightContext.forPlan(plan, null))
         val time = plan.departure.plusSeconds(2700)
         val point = FlightTiming.progress(plan, time).point
         assertEquals(OfflineFlightContext.nearby(prepared, time, point), OfflineFlightContext.nearby(restoredContext, time, point))
@@ -87,6 +92,36 @@ class OfflineFlightContextTest {
         val changedRoute = plan.copy(waypoints = listOf(plan.origin.point, GeoPoint(45.0, 120.0), plan.destination.point))
         assertNotEquals(saved.planKey, OfflineFlightContext.forPlan(changedRoute, saved).planKey)
         assertEquals(saved, OfflineFlightContext.forPlan(plan, saved.copy(catalogVersion = 0)))
+        val takeoff = plan.copy(actualTakeoff = plan.departure.plusSeconds(14400))
+        val reanchored = OfflineFlightContext.forPlan(takeoff, saved)
+        assertEquals(takeoff.actualTakeoff, reanchored.windowStart)
+        assertEquals(FlightTiming.estimatedArrival(takeoff), reanchored.windowEnd)
+        assertTrue(reanchored.flights.isEmpty())
+    }
+
+    @Test fun documentedWinterFlightSupportsFeedbackDateWithoutSummerRecurrence() {
+        val winter = plan.copy(departure = plan.departure.plusSeconds(11 * 86400L), arrival = plan.arrival.plusSeconds(11 * 86400L))
+        val context = OfflineFlightContext.prepare(winter)
+        assertEquals(listOf("MU5362"), context.flights.map { it.number })
+        assertEquals(Instant.parse("2026-10-31T03:55:00Z"), context.flights.single().arrival)
+        assertTrue((0..129).any { minute ->
+            val time = winter.departure.plusSeconds(minute * 60L)
+            OfflineFlightContext.nearby(context, time, FlightTiming.progress(winter, time).point).isNotEmpty()
+        })
+        assertFalse(OfflineFlightContext.schedulesOn(LocalDate.of(2026, 10, 24)).any { it.number == "MU5362" })
+    }
+
+    @Test fun filedCorridorUsesItsOwnGeometryAndNeverForcesAnEncounter() {
+        val enriched = TrajectoryCatalog.enrichPlan(plan)
+        val context = OfflineFlightContext.prepare(enriched)
+        for (minute in 0..129) {
+            val time = enriched.departure.plusSeconds(minute * 60L)
+            val own = FlightTiming.progress(enriched, time).point
+            val nearby = OfflineFlightContext.nearby(context, time, own)
+            assertTrue(nearby.all { GreatCircle.distanceKm(own, it.point) <= 150.0 })
+            assertTrue(nearby.all { it.schedule.departure <= time && it.schedule.arrival > time })
+        }
+        assertTrue(context.peaks.any { it.id == "tianmen" })
     }
 
     @Test fun estimatedAircraftLayoutRespectsSharedCollisionBoxes() {

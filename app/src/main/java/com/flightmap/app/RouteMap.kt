@@ -8,6 +8,8 @@ import android.graphics.RectF
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -55,11 +57,12 @@ fun RouteMap(pack: FlightPack, progress: FlightProgress, modifier: Modifier = Mo
     var headingUp by remember { mutableStateOf(false) }
     var selectedCity by remember { mutableStateOf<City?>(null) }
     var selectedContext by remember { mutableStateOf<Pair<String, String>?>(null) }
-    val offlineContext = remember(pack.plan) { OfflineFlightContext.prepare(pack.plan) }
+    val offlineContext = remember(pack.plan, pack.offlineContext) {
+        OfflineFlightContext.forPlan(pack.plan, pack.offlineContext)
+    }
 
     val flightTime = remember(progress.fraction, pack.plan) {
-        val totalMs = Duration.between(pack.plan.departure, pack.plan.arrival).toMillis()
-        pack.plan.departure.plusMillis((totalMs * progress.fraction).toLong())
+        FlightTiming.timeAtFraction(pack.plan, progress.fraction)
     }
     val nearbyAircraft = remember(offlineContext, flightTime, progress.point) {
         OfflineFlightContext.nearby(offlineContext, flightTime, progress.point)
@@ -93,7 +96,8 @@ fun RouteMap(pack: FlightPack, progress: FlightProgress, modifier: Modifier = Mo
                 }
             }
             m.setStyle(Style.Builder().fromJson(OfflineMaps.styleJson(context))) { style ->
-                val route = GreatCircle.routeWaypoints(pack.plan.effectiveWaypoints)
+                val route = if (pack.plan.effectiveHistoricalTrack != null) pack.plan.effectiveWaypoints
+                    else GreatCircle.routeWaypoints(pack.plan.effectiveWaypoints)
                 // Break lines crossing the date line to avoid a false line across the world.
                 val parts = mutableListOf<MutableList<Point>>(mutableListOf())
                 route.forEachIndexed { i, p ->
@@ -327,7 +331,7 @@ fun RouteMap(pack: FlightPack, progress: FlightProgress, modifier: Modifier = Mo
             FilledTonalButton(
                 onClick = {
                     followPlane = false
-                    val points = GreatCircle.route(pack.plan.origin.point, pack.plan.destination.point).map { LatLng(it.lat.coerceIn(-84.0, 84.0), it.lon) }
+                    val points = pack.plan.effectiveWaypoints.map { LatLng(it.lat.coerceIn(-84.0, 84.0), it.lon) }
                     if (points.maxOf { it.longitude } - points.minOf { it.longitude } < 180) {
                         map?.animateCamera(CameraUpdateFactory.newLatLngBounds(LatLngBounds.Builder().includes(points).build(), 45))
                     } else {
@@ -421,7 +425,7 @@ fun RouteMap(pack: FlightPack, progress: FlightProgress, modifier: Modifier = Mo
     }
     selectedContext?.let { (title, details) ->
         AlertDialog(onDismissRequest = { selectedContext = null }, title = { Text(title) },
-            text = { Text(details) }, confirmButton = {
+            text = { Text(details, modifier = Modifier.verticalScroll(rememberScrollState())) }, confirmButton = {
                 TextButton(onClick = { selectedContext = null }) { Text("Close") }
             })
     }

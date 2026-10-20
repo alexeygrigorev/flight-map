@@ -27,7 +27,7 @@ data class PreparedFlightContext(
     val flights: List<OfflineScheduledFlight>,
     val windowStart: Instant,
     val windowEnd: Instant,
-    val catalogVersion: Int = 1,
+    val catalogVersion: Int = 2,
     val planKey: String = ""
 )
 
@@ -52,12 +52,13 @@ object OfflineFlightContext {
 
     /** Reuse preparation output only for precisely the same route and playback window. */
     fun forPlan(plan: FlightPlan, saved: PreparedFlightContext?): PreparedFlightContext =
-        saved?.takeIf { it.catalogVersion == 1 && it.planKey == planKey(plan) } ?: prepare(plan)
+        saved?.takeIf { it.catalogVersion == 2 && it.planKey == planKey(plan) } ?: prepare(plan)
 
     private fun planKey(plan: FlightPlan): String {
         val input = buildString {
             append(plan.number); append('|'); append(plan.origin.iata); append('|'); append(plan.destination.iata)
-            append('|'); append(plan.departure); append('|'); append(plan.arrival)
+            append('|'); append(FlightTiming.effectiveDeparture(plan)); append('|'); append(FlightTiming.estimatedArrival(plan))
+            append('|'); append(plan.actualTakeoff); append('|'); append(plan.effectiveHistoricalTrack)
             for (point in plan.effectiveWaypoints) {
                 append('|'); append(point.lat); append(','); append(point.lon)
             }
@@ -70,6 +71,16 @@ object OfflineFlightContext {
      * Airport points: bundled OurAirports dataset. Equipment is scheduled, not observed.
      */
     fun schedulesOn(date: LocalDate): List<OfflineScheduledFlight> {
+        // Individually listed dated winter departures, including Saturday 31 October.
+        // Do not extend recurrence from the ambiguous "every weekday" text in the same feed.
+        // https://www.flight.info/MU5362 (checked 2026-10-20): CSX 10:15 → SHA 11:55.
+        if (date >= LocalDate.of(2026, 10, 25) && date <= LocalDate.of(2026, 10, 31)) {
+            return listOf(OfflineScheduledFlight("MU5362", "CSX", "SHA", GeoPoint(28.1892, 113.22),
+                GeoPoint(31.1981, 121.33426),
+                date.atTime(10, 15).atZone(chinaZone).toInstant(),
+                date.atTime(11, 55).atZone(chinaZone).toInstant(),
+                "Scheduled Airbus A321", "https://www.flight.info/MU5362"))
+        }
         if (date < LocalDate.of(2026, 9, 17) || date > LocalDate.of(2026, 10, 24)) return emptyList()
         fun entry(number: String, code: String, point: GeoPoint, dep: String, arr: String, equipment: String) =
             OfflineScheduledFlight(number, code, "CSX", point, GeoPoint(28.1892, 113.2200),
@@ -83,11 +94,11 @@ object OfflineFlightContext {
 
     /** Called during preparation; old packs can derive exactly the same result offline. */
     fun prepare(plan: FlightPlan): PreparedFlightContext {
-        val start = plan.departure
-        val end = plan.arrival
+        val start = FlightTiming.effectiveDeparture(plan)
+        val end = FlightTiming.estimatedArrival(plan)
         val firstDay = start.atZone(chinaZone).toLocalDate().minusDays(1)
             .coerceAtLeast(LocalDate.of(2026, 9, 17))
-        val lastDay = end.atZone(chinaZone).toLocalDate().coerceAtMost(LocalDate.of(2026, 10, 24))
+        val lastDay = end.atZone(chinaZone).toLocalDate().coerceAtMost(LocalDate.of(2026, 10, 31))
         val flights = mutableListOf<OfflineScheduledFlight>()
         var date = firstDay
         while (date <= lastDay) {
@@ -108,8 +119,8 @@ object OfflineFlightContext {
     // One-minute synchronized samples, with 50 km margin beyond the displayed 150 km radius.
     // This is an estimate filter, not an assertion that the two aircraft actually met.
     private fun overlapsRoute(plan: FlightPlan, flight: OfflineScheduledFlight): Boolean {
-        var time = maxOf(plan.departure, flight.departure)
-        val end = minOf(plan.arrival, flight.arrival)
+        var time = maxOf(FlightTiming.effectiveDeparture(plan), flight.departure)
+        val end = minOf(FlightTiming.estimatedArrival(plan), flight.arrival)
         while (time <= end) {
             val point = estimatedPosition(flight, time).first
             if (GreatCircle.distanceKm(FlightTiming.progress(plan, time).point, point) <= 200.0) return true

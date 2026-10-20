@@ -16,6 +16,8 @@ import androidx.compose.foundation.gestures.calculateRotation
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -168,15 +170,15 @@ fun IfeGlobeView(
     allCities: List<City>,
     cameraState: GlobeCameraState,
     modifier: Modifier = Modifier,
-    flightTime: Instant = pack.plan.departure.plusMillis(
-        (Duration.between(pack.plan.departure, pack.plan.arrival).toMillis() * progress.fraction).toLong()
-    )
+    flightTime: Instant = FlightTiming.timeAtFraction(pack.plan, progress.fraction)
 ) {
     val context = LocalContext.current
     var viewportSize by remember { mutableStateOf(IntSize(1920, 1080)) }
     var selectedAircraft by remember(pack.plan) { mutableStateOf<EstimatedAircraft?>(null) }
 
-    val offlineContext = remember(pack.plan) { OfflineFlightContext.prepare(pack.plan) }
+    val offlineContext = remember(pack.plan, pack.offlineContext) {
+        OfflineFlightContext.forPlan(pack.plan, pack.offlineContext)
+    }
     val nearbyAircraft = remember(offlineContext, flightTime, progress.point) {
         OfflineFlightContext.nearby(offlineContext, flightTime, progress.point)
     }
@@ -470,6 +472,7 @@ fun IfeGlobeView(
                                 val box = plannedAircraft.box
                                 if (lastPos.x in box.left..box.right && lastPos.y in box.top..box.bottom) {
                                     bestDistPx = 0f
+                                    bestFeature = null
                                     selectedAircraft = plannedAircraft.aircraft
                                 }
                             }
@@ -565,7 +568,8 @@ fun IfeGlobeView(
                     "${schedule.arrival.atZone(java.time.ZoneId.of("Asia/Shanghai")).toLocalTime()} (UTC+8)\n\n" +
                     "Airport-to-airport position estimated from scheduled block time, including taxi. " +
                     "Actual route, operation and aircraft are unverified. This cannot identify a plane outside your window.\n\n" +
-                    "Source checked ${schedule.sourceCheckedOn}: ${schedule.sourceUrl}")
+                    "Source checked ${schedule.sourceCheckedOn}: ${schedule.sourceUrl}",
+                    modifier = Modifier.verticalScroll(rememberScrollState()))
             },
             confirmButton = { TextButton(onClick = { selectedAircraft = null }) { Text("Close") } }
         )
@@ -1422,10 +1426,22 @@ private fun drawTrajectoryRibbon(
 ) {
     val waypoints = plan.effectiveWaypoints
     val segCount = if (proj.zoom >= 2.2) 360 else 200
-    val densePoints = GreatCircle.routeWaypoints(waypoints, segCount)
+    // Historical samples retain every original vertex; smoothing can cut observed turns.
+    val historical = plan.effectiveHistoricalTrack != null
+    val densePoints = if (historical) waypoints else GreatCircle.routeWaypoints(waypoints, segCount)
     if (densePoints.size < 2) return
 
-    val splitIdx = (progress.fraction * (densePoints.size - 1)).roundToInt().coerceIn(0, densePoints.lastIndex)
+    val splitIdx = if (historical) {
+        var index = 0
+        var distance = 0.0
+        while (index < densePoints.lastIndex) {
+            val next = distance + GreatCircle.distanceKm(densePoints[index], densePoints[index + 1])
+            if (next > progress.flownKm) break
+            distance = next
+            index++
+        }
+        index
+    } else (progress.fraction * densePoints.lastIndex).toInt().coerceIn(0, densePoints.lastIndex)
 
     val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = android.graphics.Color.argb(95, 4, 12, 28)
@@ -1496,9 +1512,9 @@ private fun drawTrajectoryRibbon(
         }
     }
 
-    if (splitIdx > 0) {
+    if (progress.flownKm > 0) {
         val flownPts = ArrayList<GeoPoint>(splitIdx + 2)
-        flownPts.addAll(densePoints.subList(0, splitIdx))
+        flownPts.addAll(densePoints.subList(0, splitIdx + 1))
         flownPts.add(progress.point)
         val flownPath = buildProjectedPath(flownPts)
         if (!flownPath.isEmpty) {
