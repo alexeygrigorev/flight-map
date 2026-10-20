@@ -32,7 +32,10 @@ class FlightNotificationService : Service() {
         /** Call only from a visible Activity following the user's notification action. */
         fun start(context: Context, plan: FlightPlan) {
             context.startForegroundService(Intent(context, FlightNotificationService::class.java)
-                .putExtra(PLAN, FlightPackCodec.createGson().toJson(plan)))
+                // Pass a small identity snapshot, never a potentially large historical track through Binder.
+                .putExtra(PLAN, FlightPackCodec.createGson().toJson(plan.copy(
+                    historicalTrack = null, waypoints = emptyList(), waypointNames = emptyList()
+                ))))
         }
 
         fun stop(context: Context) {

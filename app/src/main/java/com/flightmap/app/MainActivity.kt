@@ -805,7 +805,7 @@ private fun FlightScreen(vm: FlightViewModel) {
         if (simulation) enriched.copy(actualTakeoff = null, landedAt = null) else enriched
     }
     val pack = remember(rawPack, plan) {
-        if (rawPack.plan.waypoints == plan.waypoints) rawPack else rawPack.copy(plan = plan)
+        if (rawPack.plan == plan) rawPack else rawPack.copy(plan = plan)
     }
 
     // Support both Landscape & Portrait orientations with an on-screen toggle button (AC #20)
@@ -1496,6 +1496,7 @@ private fun RouteFlightHeader(
                 Text(FlightPresentation.status(progress, plan.landedAt != null), color = if (progress.phase == "ARRIVED") Mint else Cream,
                     fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 Text("${FlightPresentation.altitude(progress)} · ${(progress.fraction * 100).roundToInt()}%", color = Muted, fontSize = 11.sp)
+                Text(FlightPresentation.arrival(plan, progress, time), color = Muted, fontSize = 11.sp)
             }
             IconButton(onClick = onOrientation) {
                 Icon(Icons.Outlined.ScreenRotation, if (isLandscape) "Switch to portrait" else "Switch to landscape", tint = Mint)
@@ -1543,7 +1544,7 @@ private fun FlightControlsDialog(vm: FlightViewModel, onDismiss: () -> Unit, onS
                 if (monitoring) vm.stopFlightNotification()
                 else if (android.os.Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                     permission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-                } else if (!notifications.areNotificationsEnabled()) permissionDenied = true
+                } else if (!notifications.areNotificationsEnabled() || notifications.getNotificationChannel("ongoing_flight")?.importance == android.app.NotificationManager.IMPORTANCE_NONE) permissionDenied = true
                 else vm.enableFlightNotification()
             }) { Text(if (monitoring) "Stop flight card" else "Enable flight card") }
             if (permissionDenied) {
@@ -1557,6 +1558,13 @@ private fun FlightControlsDialog(vm: FlightViewModel, onDismiss: () -> Unit, onS
             if (vm.livePlay != null || vm.previewFraction != null) TextButton(onClick = { vm.stopLivePlay(); onDismiss() }) { Text("Return to real time") }
             Text(FlightPresentation.arrival(plan, FlightTiming.progress(plan, vm.now), vm.now), color = Muted, fontSize = 12.sp)
             Text(plan.effectiveRouteLabel, color = Muted, fontSize = 11.sp)
+            plan.historicalTrack?.let { track ->
+                Text("Historical source: ${track.source} · ${track.observedDeparture.atZone(ZoneOffset.UTC).toLocalDate()}", color = Muted, fontSize = 11.sp)
+                track.coverageNote?.let { Text(it, color = Amber, fontSize = 11.sp) }
+                TextButton(onClick = {
+                    context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(track.sourceUrl)))
+                }) { Text("Historical source details") }
+            }
             Text(FlightTiming.progress(plan, vm.now).altitudeSource ?: "No altitude observation available", color = Muted, fontSize = 11.sp)
         }
     }, confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } })
