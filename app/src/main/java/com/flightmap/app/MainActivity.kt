@@ -145,12 +145,12 @@ private data class TripPresetChip(
 )
 
 private val TRIP_PRESET_CHIPS = listOf(
-    TripPresetChip("MU689", "2026-10-20", "MU689 · PVG→DYG · 20 Oct"),
-    TripPresetChip("CZ3382", "2026-10-23", "CZ3382 · DYG→CAN · 23 Oct"),
-    TripPresetChip("CZ3085", "2026-10-25", "CZ3085 · CAN→HND · 25 Oct"),
-    TripPresetChip("EY801", "2026-10-30", "EY801 · NRT→AUH · 30 Oct"),
-    TripPresetChip("DE2553", "2026-10-31", "DE2553 · AUH→BER · 31 Oct"),
-    TripPresetChip("AY87", "2026-10-20", "AY87 · HEL→PVG · 20 Oct")
+    TripPresetChip("MU689", "2026-10-20", "MU689"),
+    TripPresetChip("CZ3382", "2026-10-23", "CZ3382"),
+    TripPresetChip("CZ3085", "2026-10-25", "CZ3085"),
+    TripPresetChip("EY801", "2026-10-30", "EY801"),
+    TripPresetChip("DE2553", "2026-10-31", "DE2553"),
+    TripPresetChip("AY87", "2026-10-20", "AY87")
 )
 
 @Composable
@@ -167,6 +167,7 @@ private fun PrepareScreen(vm: FlightViewModel) {
     var departure by rememberSaveableState(initialSchedule?.departureLocalIso ?: "${defaultDate}T10:00")
     var arrival by rememberSaveableState(initialSchedule?.arrivalLocalIso ?: "${defaultDate}T12:10")
     var manualExpanded by remember { mutableStateOf(false) }
+    var optionsOpen by remember { mutableStateOf(false) }
     var about by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<FlightPack?>(null) }
     val saved = vm.pack
@@ -251,7 +252,6 @@ private fun PrepareScreen(vm: FlightViewModel) {
         }
     }
 
-    // Match existing saved pack if user selected or entered an already-prepared flight (avoids re-download trap!)
     val matchingSavedPack = remember(vm.packs, flight, origin, destination, date) {
         val normFlight = TrajectoryCatalog.normalizeFlightNumber(flight)
         vm.packs.firstOrNull { p ->
@@ -268,72 +268,45 @@ private fun PrepareScreen(vm: FlightViewModel) {
         saved?.plan?.let { fillFrom(it) }
     }
 
+    val originAirport = remember(origin, vm.loaded) { vm.repository.airports.firstOrNull { it.iata == origin } }
+    val destAirport = remember(destination, vm.loaded) { vm.repository.airports.firstOrNull { it.iata == destination } }
+    val originCity = originAirport?.let { IFE_AIRPORT_CITY_NAMES[it.iata] ?: it.name.substringBefore(" ") } ?: origin
+    val destCity = destAirport?.let { IFE_AIRPORT_CITY_NAMES[it.iata] ?: it.name.substringBefore(" ") } ?: destination
+    val depTimeOnly = remember(departure) {
+        runCatching { LocalDateTime.parse(departure).format(DateTimeFormatter.ofPattern("HH:mm")) }.getOrDefault(departure.takeLast(5))
+    }
+    val arrTimeOnly = remember(arrival) {
+        runCatching { LocalDateTime.parse(arrival).format(DateTimeFormatter.ofPattern("HH:mm")) }.getOrDefault(arrival.takeLast(5))
+    }
+
     Column(
         Modifier
             .fillMaxSize()
             .safeDrawingPadding()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 22.dp)
+            .padding(horizontal = 28.dp),
+        verticalArrangement = Arrangement.Center
     ) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(top = 10.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Eyebrow("Flight Map · Offline In-Flight Globe", Mint)
-            Spacer(Modifier.weight(1f))
-            IconButton(onClick = { about = true }) {
-                Icon(Icons.Outlined.Info, "About & data sources", tint = Muted)
-            }
-        }
+        // 1. Minimalist Title
         Text(
-            "Prepare for flight",
+            "Flight Map",
             fontSize = 28.sp,
-            lineHeight = 34.sp,
             fontWeight = FontWeight.SemiBold,
-            letterSpacing = (-0.8).sp
+            letterSpacing = (-0.5).sp,
+            color = Cream
         )
+        Spacer(Modifier.height(4.dp))
         Text(
-            "Enter flight number + date to confirm schedule & download once, or load a .flightpack.json file.",
-            color = Muted,
+            "$origin → $destination  ·  $originCity to $destCity  ·  $depTimeOnly–$arrTimeOnly",
+            color = if (isCurrentFlightPrepared) Mint else Muted,
             fontSize = 13.sp,
-            lineHeight = 18.sp,
-            modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
 
-        // Quick Trip Presets (China / Japan / Abu Dhabi / Berlin + AY87)
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.padding(bottom = 12.dp)
-        ) {
-            items(TRIP_PRESET_CHIPS) { chip ->
-                val selected = TrajectoryCatalog.normalizeFlightNumber(flight) == chip.code && date == chip.date
-                Surface(
-                    onClick = {
-                        flight = chip.code
-                        date = chip.date
-                        applyScheduleLookup(chip.code, chip.date)
-                        vm.packs.firstOrNull {
-                            TrajectoryCatalog.normalizeFlightNumber(it.plan.number) == chip.code
-                        }?.let { vm.selectPack(it) }
-                    },
-                    color = if (selected) IfeIndigoBright else Panel,
-                    shape = RoundedCornerShape(50),
-                    border = BorderStroke(1.dp, if (selected) Mint else Color(0xFF283A52))
-                ) {
-                    Text(
-                        chip.label,
-                        color = if (selected) Mint else Cream,
-                        fontSize = 11.5.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                    )
-                }
-            }
-        }
+        Spacer(Modifier.height(24.dp))
 
-        // Primary Simplified Inputs: ONLY Flight number + Date
+        // 2. Flight Number & Date Inputs
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedTextField(
                 flight,
@@ -342,7 +315,7 @@ private fun PrepareScreen(vm: FlightViewModel) {
                     flight = upper
                     applyScheduleLookup(upper, date)
                 },
-                label = { Text("Flight number") },
+                label = { Text("Flight") },
                 placeholder = { Text("MU689") },
                 singleLine = true,
                 enabled = !vm.busy,
@@ -365,183 +338,14 @@ private fun PrepareScreen(vm: FlightViewModel) {
             )
         }
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(20.dp))
 
-        // Confirmed Flight Card (shows confirmed airports, local dep/arr times, carrier, corridor)
-        val templateMatch = remember(flight) { TrajectoryCatalog.lookupTemplate(flight) }
-        val originAirport = remember(origin, vm.loaded) { vm.repository.airports.firstOrNull { it.iata == origin } }
-        val destAirport = remember(destination, vm.loaded) { vm.repository.airports.firstOrNull { it.iata == destination } }
-        val originCity = originAirport?.let { IFE_AIRPORT_CITY_NAMES[it.iata] ?: it.name.substringBefore(" ") } ?: origin
-        val destCity = destAirport?.let { IFE_AIRPORT_CITY_NAMES[it.iata] ?: it.name.substringBefore(" ") } ?: destination
-        val depShort = remember(departure) {
-            runCatching {
-                LocalDateTime.parse(departure).format(DateTimeFormatter.ofPattern("d MMM · HH:mm"))
-            }.getOrDefault(departure)
-        }
-        val arrShort = remember(arrival) {
-            runCatching {
-                LocalDateTime.parse(arrival).format(DateTimeFormatter.ofPattern("d MMM · HH:mm"))
-            }.getOrDefault(arrival)
-        }
-
-        Surface(
-            color = Panel,
-            shape = RoundedCornerShape(16.dp),
-            border = BorderStroke(1.dp, if (isCurrentFlightPrepared) Mint.copy(alpha = 0.55f) else Color(0xFF23344A)),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Eyebrow(
-                            if (isCurrentFlightPrepared) "CONFIRMED FLIGHT · OFFLINE READY" else "CONFIRMED FLIGHT",
-                            if (isCurrentFlightPrepared) Mint else Amber
-                        )
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            "${flight.ifBlank { "FLIGHT" }} · $origin ($originCity) → $destination ($destCity)",
-                            color = Cream,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        if (templateMatch != null) {
-                            Text(
-                                "${templateMatch.airline} · ${templateMatch.aircraft}",
-                                color = Mint,
-                                fontSize = 11.5.sp
-                            )
-                        }
-                    }
-                    StatusPill(
-                        if (isCurrentFlightPrepared) "READY" else "CONFIRMED",
-                        ready = isCurrentFlightPrepared
-                    )
-                }
-                Spacer(Modifier.height(8.dp))
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column {
-                        Text("DEPARTURE", color = Muted, fontSize = 9.5.sp, fontWeight = FontWeight.SemiBold)
-                        Text(depShort, color = Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
-                        Text(originAirport?.timezone ?: "Local", color = Muted, fontSize = 10.5.sp)
-                    }
-                    Text("✈", color = Mint, fontSize = 16.sp, modifier = Modifier.align(Alignment.CenterVertically))
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text("ARRIVAL", color = Muted, fontSize = 9.5.sp, fontWeight = FontWeight.SemiBold)
-                        Text(arrShort, color = Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
-                        Text(destAirport?.timezone ?: "Local", color = Muted, fontSize = 10.5.sp)
-                    }
-                }
-                resolvedPreview?.let { res ->
-                    val wps = res.effectiveWaypoints
-                    val km = GreatCircle.routeDistanceKm(wps).roundToInt()
-                    Text(
-                        "${res.effectiveRouteLabel} · ${wps.size} waypoints · %,d km".format(km),
-                        color = if (res.isRealTrajectory) Mint else Amber,
-                        fontSize = 11.sp,
-                        modifier = Modifier.padding(top = 6.dp)
-                    )
-                }
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(top = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        "Curated corridor cities & approx weather",
-                        color = Muted,
-                        fontSize = 10.5.sp,
-                        modifier = Modifier.weight(1f)
-                    )
-                    TextButton(
-                        onClick = { manualExpanded = !manualExpanded },
-                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                        modifier = Modifier.height(26.dp),
-                        enabled = !vm.busy
-                    ) {
-                        Text(
-                            if (manualExpanded) "Hide manual override ▴" else "Edit route / time ▾",
-                            color = Mint,
-                            fontSize = 11.sp
-                        )
-                    }
-                }
-            }
-        }
-
-        if (manualExpanded) {
-            Spacer(Modifier.height(10.dp))
-            Surface(
-                color = Color(0xFF0C1424),
-                shape = RoundedCornerShape(16.dp),
-                border = BorderStroke(1.dp, Color(0xFF23344A)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(Modifier.padding(14.dp)) {
-                    Eyebrow("Manual route & time override", Muted)
-                    Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        AirportInput("From", origin, {
-                            origin = it
-                            applyScheduleLookup(flight, date)
-                        }, vm, Modifier.weight(1f))
-                        AirportInput("To", destination, {
-                            destination = it
-                            applyScheduleLookup(flight, date)
-                        }, vm, Modifier.weight(1f))
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        departure,
-                        { newDep ->
-                            departure = newDep
-                            val parsedDate = runCatching { LocalDate.parse(date.trim()) }.getOrNull()
-                            val from = vm.repository.airports.firstOrNull { it.iata == origin }
-                            val to = vm.repository.airports.firstOrNull { it.iata == destination }
-                            val timePart = newDep.trim().substringAfter("T").take(5)
-                            val parsedTime = runCatching { LocalTime.parse(timePart) }.getOrNull()
-                            if (parsedDate != null && from != null && to != null && parsedTime != null) {
-                                val sched = TrajectoryCatalog.buildScheduleForRoute(flight, from, to, parsedDate, parsedTime)
-                                arrival = sched.arrivalLocalIso
-                            }
-                        },
-                        label = { Text("Departure local ISO") },
-                        singleLine = true,
-                        enabled = !vm.busy,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(14.dp)
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    OutlinedTextField(
-                        arrival,
-                        { arrival = it },
-                        label = { Text("Arrival local ISO") },
-                        singleLine = true,
-                        enabled = !vm.busy,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(14.dp)
-                    )
-                }
-            }
-        }
-
-        Spacer(Modifier.height(12.dp))
-
-        // NO RE-DOWNLOAD TRAP (AC #2 & #3):
-        // If this flight is already downloaded, primary button is "Open offline flight" (NOT Download data again!).
-        // If not yet downloaded, primary button is "Download data".
-        if (isCurrentFlightPrepared && matchingSavedPack != null && !vm.busy) {
+        // 3. Single Main Action Button
+        if (isCurrentFlightPrepared && !vm.busy) {
+            val readyPack = matchingSavedPack!!
             Button(
                 onClick = {
-                    vm.selectPack(matchingSavedPack)
+                    vm.selectPack(readyPack)
                     vm.fly()
                 },
                 modifier = Modifier
@@ -550,29 +354,9 @@ private fun PrepareScreen(vm: FlightViewModel) {
                     .semantics { contentDescription = "Open offline flight" },
                 shape = RoundedCornerShape(16.dp)
             ) {
-                Icon(Icons.Outlined.FlightTakeoff, null, Modifier.size(20.dp))
+                Icon(Icons.Outlined.FlightTakeoff, null, Modifier.size(19.dp))
                 Spacer(Modifier.width(10.dp))
-                Text("Open offline flight (${matchingSavedPack.plan.number})", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-            }
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(top = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "✓ Data downloaded (${matchingSavedPack.cities.size} cities + offline globe)",
-                    color = Mint,
-                    fontSize = 11.5.sp
-                )
-                TextButton(
-                    onClick = { vm.prepare(flight, date, origin, destination, departure, arrival) },
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                    modifier = Modifier.height(26.dp)
-                ) {
-                    Text("Refresh weather", color = Muted, fontSize = 11.sp)
-                }
+                Text("Open flight map", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             }
         } else {
             Button(
@@ -586,173 +370,286 @@ private fun PrepareScreen(vm: FlightViewModel) {
                     .semantics { contentDescription = "Download data" },
                 shape = RoundedCornerShape(16.dp)
             ) {
-                Icon(Icons.Outlined.Download, null, Modifier.size(20.dp))
+                Icon(Icons.Outlined.Download, null, Modifier.size(19.dp))
                 Spacer(Modifier.width(10.dp))
-                Text(if (vm.busy) "Downloading flight data…" else "Download data", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-            }
-        }
-
-        Spacer(Modifier.height(8.dp))
-
-        // Secondary Action Row: [Simulate flight now] + [Load .flightpack.json]
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            OutlinedButton(
-                onClick = {
-                    if (matchingSavedPack != null) {
-                        vm.selectPack(matchingSavedPack)
-                        vm.simulateFlightNow(matchingSavedPack.plan)
-                    } else {
-                        vm.simulateFlightNow(resolvedPreview)
-                    }
-                },
-                enabled = vm.loaded && !vm.busy,
-                contentPadding = PaddingValues(horizontal = 10.dp),
-                modifier = Modifier
-                    .weight(0.95f)
-                    .height(46.dp)
-                    .semantics { contentDescription = "Simulate flight" },
-                shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.dp, Amber.copy(alpha = 0.6f))
-            ) {
-                Icon(Icons.Outlined.PlayArrow, null, Modifier.size(17.dp), tint = Amber)
-                Spacer(Modifier.width(5.dp))
-                Text("Simulate flight", color = Amber, fontSize = 12.sp, maxLines = 1)
-            }
-
-            OutlinedButton(
-                onClick = {
-                    packFilePicker.launch(arrayOf("application/json", "application/octet-stream", "*/*"))
-                },
-                enabled = vm.loaded && !vm.busy,
-                contentPadding = PaddingValues(horizontal = 10.dp),
-                modifier = Modifier
-                    .weight(1.2f)
-                    .height(46.dp)
-                    .semantics { contentDescription = "Load prepared file" },
-                shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.dp, Mint.copy(alpha = 0.55f))
-            ) {
-                Icon(Icons.Outlined.FileOpen, null, Modifier.size(17.dp), tint = Mint)
-                Spacer(Modifier.width(5.dp))
-                Text("Load .flightpack.json", color = Mint, fontSize = 12.sp, maxLines = 1)
-            }
-        }
-
-        // Optional ~1h before departure push notification toggle (AC #5)
-        Spacer(Modifier.height(10.dp))
-        Surface(
-            color = Panel,
-            shape = RoundedCornerShape(14.dp),
-            border = BorderStroke(1.dp, Color(0xFF23344A)),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        "Push reminder ~1h before departure",
-                        color = Cream,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Text(
-                        "Optional notification to refresh corridor weather before boarding",
-                        color = Muted,
-                        fontSize = 11.sp
-                    )
-                }
-                Switch(
-                    checked = vm.preDeparturePushEnabled,
-                    onCheckedChange = { enabled ->
-                        vm.setPreDeparturePush(enabled, resolvedPreview ?: saved?.plan)
-                    }
+                Text(
+                    if (vm.busy) "Preparing offline map…" else "Download offline map",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold
                 )
             }
         }
 
-        if (vm.stage.isNotBlank()) {
+        if (vm.busy && vm.stage.isNotBlank()) {
             Text(
                 vm.stage,
-                Modifier.padding(top = 8.dp),
-                color = if (vm.mapReady && vm.weatherReady) Mint else Muted,
-                fontSize = 12.5.sp
+                Modifier.padding(top = 10.dp),
+                color = Mint,
+                fontSize = 12.sp
             )
         }
         vm.error?.let {
-            Text(it, color = Amber, fontSize = 12.5.sp, lineHeight = 18.sp, modifier = Modifier.padding(top = 8.dp))
+            Text(it, color = Amber, fontSize = 12.sp, lineHeight = 17.sp, modifier = Modifier.padding(top = 10.dp))
         }
 
-        // Saved / Imported Flights list (supports multi-flight trip packs!)
-        if (vm.packs.isNotEmpty()) {
-            Spacer(Modifier.height(14.dp))
-            Eyebrow("PREPARED FLIGHTS (${vm.packs.size})", Mint)
-            Spacer(Modifier.height(8.dp))
-            vm.packs.forEach { flightPack ->
-                val enrichedPlan = TrajectoryCatalog.enrichPlan(flightPack.plan)
-                val isSelected = flightPack == saved
-                Surface(
-                    color = if (isSelected) Color(0xFF15233C) else Panel,
-                    shape = RoundedCornerShape(14.dp),
-                    border = BorderStroke(1.dp, if (isSelected) Mint.copy(alpha = 0.5f) else Color.Transparent),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 7.dp)
+        Spacer(Modifier.height(16.dp))
+
+        // 4. Single Quiet Trigger for Secondary UI (Saved flights, Simulate, Import, Options)
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            TextButton(
+                onClick = { optionsOpen = true },
+                enabled = !vm.busy,
+                modifier = Modifier.semantics { contentDescription = "Saved flights and options" }
+            ) {
+                val label = if (vm.packs.isNotEmpty()) {
+                    "Saved flights (${vm.packs.size}) & options"
+                } else {
+                    "Saved flights & options"
+                }
+                Text(label, color = Muted, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            }
+        }
+    }
+
+    if (optionsOpen) {
+        AlertDialog(
+            onDismissRequest = { optionsOpen = false },
+            containerColor = Color(0xFF0D1628),
+            titleContentColor = Cream,
+            textContentColor = Cream,
+            title = {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Row(
-                        Modifier.padding(start = 14.dp, top = 8.dp, bottom = 8.dp, end = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Text("Saved flights & options", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                    IconButton(
+                        onClick = { about = true },
+                        modifier = Modifier.size(30.dp)
                     ) {
-                        Column(
-                            Modifier
-                                .weight(1f)
-                                .clickable(enabled = !vm.busy) {
-                                    vm.selectPack(flightPack)
-                                    fillFrom(flightPack.plan)
+                        Icon(Icons.Outlined.Info, "About & data sources", tint = Muted, modifier = Modifier.size(18.dp))
+                    }
+                }
+            },
+            text = {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    if (vm.packs.isNotEmpty()) {
+                        Eyebrow("SAVED FLIGHTS (${vm.packs.size})", Muted)
+                        Spacer(Modifier.height(6.dp))
+                        vm.packs.forEach { flightPack ->
+                            val isSelected = flightPack == matchingSavedPack || flightPack == saved
+                            val depDateStr = flightPack.plan.departure
+                                .atZone(ZoneId.of(flightPack.plan.origin.timezone))
+                                .format(DateTimeFormatter.ofPattern("d MMM · HH:mm"))
+                            Surface(
+                                color = if (isSelected) Color(0xFF162744) else Panel,
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(1.dp, if (isSelected) Mint.copy(alpha = 0.45f) else Color.Transparent),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 5.dp)
+                            ) {
+                                Row(
+                                    Modifier
+                                        .clickable(enabled = !vm.busy) {
+                                            vm.selectPack(flightPack)
+                                            fillFrom(flightPack.plan)
+                                            optionsOpen = false
+                                        }
+                                        .padding(start = 12.dp, top = 6.dp, bottom = 6.dp, end = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        flightPack.plan.number,
+                                        color = if (isSelected) Mint else Color.White,
+                                        fontSize = 13.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier.width(62.dp)
+                                    )
+                                    Text(
+                                        "${flightPack.plan.origin.iata} → ${flightPack.plan.destination.iata}",
+                                        color = Cream,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        depDateStr,
+                                        color = Muted,
+                                        fontSize = 11.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    TextButton(
+                                        onClick = {
+                                            optionsOpen = false
+                                            vm.selectPack(flightPack)
+                                            vm.fly()
+                                        },
+                                        enabled = !vm.busy,
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                                        modifier = Modifier.height(28.dp)
+                                    ) {
+                                        Text("Open", color = Mint, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+                                    IconButton(
+                                        onClick = { deleting = flightPack },
+                                        enabled = !vm.busy,
+                                        modifier = Modifier.size(26.dp)
+                                    ) {
+                                        Icon(Icons.Outlined.Close, "Delete ${flightPack.plan.number}", tint = Muted, modifier = Modifier.size(14.dp))
+                                    }
                                 }
-                        ) {
-                            Text(
-                                "${flightPack.plan.number} · ${flightPack.plan.origin.iata} → ${flightPack.plan.destination.iata}",
-                                color = if (isSelected) Mint else Cream,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                "${flightPack.cities.size} cities · " +
-                                    flightPack.plan.departure.atZone(ZoneId.of(flightPack.plan.origin.timezone))
-                                        .format(DateTimeFormatter.ofPattern("d MMM yyyy · HH:mm")) +
-                                    " · ${enrichedPlan.effectiveRouteLabel}",
-                                color = Muted,
-                                fontSize = 11.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                            }
                         }
+                        Spacer(Modifier.height(10.dp))
+                    }
+
+                    Eyebrow("TOOLS", Muted)
+                    Spacer(Modifier.height(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = {
+                                optionsOpen = false
+                                if (matchingSavedPack != null) {
+                                    vm.selectPack(matchingSavedPack)
+                                    vm.simulateFlightNow(matchingSavedPack.plan)
+                                } else {
+                                    vm.simulateFlightNow(resolvedPreview)
+                                }
+                            },
+                            enabled = vm.loaded && !vm.busy,
+                            modifier = Modifier
+                                .weight(1f)
+                                .semantics { contentDescription = "Simulate flight" },
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                        ) {
+                            Icon(Icons.Outlined.PlayArrow, null, Modifier.size(15.dp), tint = Amber)
+                            Spacer(Modifier.width(4.dp))
+                            Text("Simulate", color = Amber, fontSize = 12.sp)
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                optionsOpen = false
+                                packFilePicker.launch(arrayOf("application/json", "application/octet-stream", "*/*"))
+                            },
+                            enabled = vm.loaded && !vm.busy,
+                            modifier = Modifier
+                                .weight(1f)
+                                .semantics { contentDescription = "Load prepared file" },
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                        ) {
+                            Icon(Icons.Outlined.FileOpen, null, Modifier.size(15.dp), tint = Cream)
+                            Spacer(Modifier.width(4.dp))
+                            Text("Import pack", color = Cream, fontSize = 12.sp)
+                        }
+                    }
+
+                    if (isCurrentFlightPrepared) {
                         TextButton(
                             onClick = {
-                                vm.selectPack(flightPack)
-                                vm.fly()
+                                optionsOpen = false
+                                vm.prepare(flight, date, origin, destination, departure, arrival)
                             },
-                            enabled = !vm.busy
+                            enabled = !vm.busy,
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
                         ) {
-                            Text("Open", color = Mint, fontWeight = FontWeight.SemiBold)
+                            Text("Refresh weather forecast", color = Mint, fontSize = 12.sp)
                         }
-                        IconButton(onClick = { deleting = flightPack }, enabled = !vm.busy, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Outlined.Delete, "Delete ${flightPack.plan.number}", tint = Muted, modifier = Modifier.size(18.dp))
+                    }
+
+                    Spacer(Modifier.height(6.dp))
+                    TextButton(
+                        onClick = { manualExpanded = !manualExpanded },
+                        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp),
+                        enabled = !vm.busy
+                    ) {
+                        Text(
+                            if (manualExpanded) "Hide custom route & schedule ▴" else "Custom route & schedule ▾",
+                            color = Muted,
+                            fontSize = 12.sp
+                        )
+                    }
+
+                    if (manualExpanded) {
+                        Spacer(Modifier.height(6.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            AirportInput("From", origin, {
+                                origin = it
+                                applyScheduleLookup(flight, date)
+                            }, vm, Modifier.weight(1f))
+                            AirportInput("To", destination, {
+                                destination = it
+                                applyScheduleLookup(flight, date)
+                            }, vm, Modifier.weight(1f))
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            departure,
+                            { newDep ->
+                                departure = newDep
+                                val parsedDate = runCatching { LocalDate.parse(date.trim()) }.getOrNull()
+                                val from = vm.repository.airports.firstOrNull { it.iata == origin }
+                                val to = vm.repository.airports.firstOrNull { it.iata == destination }
+                                val timePart = newDep.trim().substringAfter("T").take(5)
+                                val parsedTime = runCatching { LocalTime.parse(timePart) }.getOrNull()
+                                if (parsedDate != null && from != null && to != null && parsedTime != null) {
+                                    val sched = TrajectoryCatalog.buildScheduleForRoute(flight, from, to, parsedDate, parsedTime)
+                                    arrival = sched.arrivalLocalIso
+                                }
+                            },
+                            label = { Text("Departure local ISO") },
+                            singleLine = true,
+                            enabled = !vm.busy,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        OutlinedTextField(
+                            arrival,
+                            { arrival = it },
+                            label = { Text("Arrival local ISO") },
+                            singleLine = true,
+                            enabled = !vm.busy,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                "Reminder ~1h before departure",
+                                color = Cream,
+                                fontSize = 12.sp
+                            )
+                            Switch(
+                                checked = vm.preDeparturePushEnabled,
+                                onCheckedChange = { enabled ->
+                                    vm.setPreDeparturePush(enabled, resolvedPreview ?: saved?.plan)
+                                }
+                            )
                         }
                     }
                 }
+            },
+            confirmButton = {
+                TextButton(onClick = { optionsOpen = false }) {
+                    Text("Done", color = Mint)
+                }
             }
-        }
-
-        Spacer(Modifier.height(24.dp))
+        )
     }
 
     deleting?.let { flightPack ->
@@ -1086,6 +983,7 @@ private fun FlightScreen(vm: FlightViewModel) {
             weather = weather,
             solarIsDay = solarIsDay,
             cameraState = cameraState,
+            isLandscape = isLandscape,
             previewOpen = previewOpen,
             isPlaying = isPlaying,
             isLiveAnchored = vm.livePlay != null,
@@ -1158,6 +1056,7 @@ private fun DiscreetIfePanel(
     weather: WeatherHour,
     solarIsDay: Boolean,
     cameraState: GlobeCameraState,
+    isLandscape: Boolean,
     previewOpen: Boolean,
     isPlaying: Boolean,
     isLiveAnchored: Boolean,
@@ -1308,15 +1207,11 @@ private fun DiscreetIfePanel(
                 )
             }
 
-            // 3. Primary single-line discreet bar: [Tap city -> short Wikidata card] | [Controls]
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+            // 3. Discreet status & camera controls bar (1-line in landscape, 2-line in portrait so city name never truncates)
+            @Composable
+            fun LocationSummaryRow(rowModifier: Modifier) {
                 Row(
-                    Modifier
-                        .weight(1f)
+                    rowModifier
                         .clickable {
                             val target = nearest ?: corridorCities.firstOrNull()
                             if (target != null) onInspectCity(target)
@@ -1334,7 +1229,8 @@ private fun DiscreetIfePanel(
                         color = Color.White,
                         fontSize = 12.5.sp,
                         fontWeight = FontWeight.SemiBold,
-                        maxLines = 1
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Text("·", color = Muted, fontSize = 11.sp)
                     Text(
@@ -1352,9 +1248,12 @@ private fun DiscreetIfePanel(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+            }
 
-                // Discreet panel action chips & camera buttons
+            @Composable
+            fun ActionControlsRow(rowModifier: Modifier = Modifier) {
                 Row(
+                    modifier = rowModifier,
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
@@ -1405,31 +1304,9 @@ private fun DiscreetIfePanel(
                         }
                     }
 
-                    DiscreetIconButton(
-                        icon = Icons.Outlined.Flight,
-                        description = "Plane",
-                        active = cameraState.followPlane,
-                        onClick = { cameraState.toggleFollowPlane(progress, pack.cities) }
-                    )
-
-                    DiscreetIconButton(
-                        icon = Icons.Outlined.Explore,
-                        description = if (cameraState.headingUp) "Heading" else "North",
-                        active = cameraState.headingUp,
-                        onClick = { cameraState.toggleHeadingUp() }
-                    )
-
-                    DiscreetTextButton(
-                        label = "−",
-                        description = "Zoom out",
-                        onClick = { cameraState.zoomOut() }
-                    )
-
-                    DiscreetTextButton(
-                        label = "+",
-                        description = "Zoom in",
-                        onClick = { cameraState.zoomIn() }
-                    )
+                    if (!isLandscape) {
+                        Spacer(Modifier.weight(1f))
+                    }
 
                     if (!cameraState.isDefaultOverview) {
                         Surface(
@@ -1444,6 +1321,44 @@ private fun DiscreetIfePanel(
                             }
                         }
                     }
+
+                    DiscreetIconButton(
+                        icon = Icons.Outlined.Flight,
+                        description = "Plane",
+                        active = cameraState.followPlane,
+                        onClick = { cameraState.toggleFollowPlane(progress, pack.cities) }
+                    )
+
+                    DiscreetTextButton(
+                        label = "−",
+                        description = "Zoom out",
+                        onClick = { cameraState.zoomOut() }
+                    )
+
+                    DiscreetTextButton(
+                        label = "+",
+                        description = "Zoom in",
+                        onClick = { cameraState.zoomIn() }
+                    )
+                }
+            }
+
+            if (isLandscape) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    LocationSummaryRow(Modifier.weight(1f))
+                    ActionControlsRow()
+                }
+            } else {
+                Column(
+                    Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    LocationSummaryRow(Modifier.fillMaxWidth())
+                    ActionControlsRow(Modifier.fillMaxWidth())
                 }
             }
         }

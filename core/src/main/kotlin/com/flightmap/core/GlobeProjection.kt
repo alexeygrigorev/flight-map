@@ -36,28 +36,26 @@ class GlobeProjection(
     val isPortrait: Boolean = height > width
     // At overview zoom (1.0), radius is large enough that the curved northern horizon arcs
     // gracefully across the top of the frame while filling the bottom width.
-    val radius: Float = (maxOf(width, height) * (if (isPortrait) 0.56 else 0.68) * zoom).toFloat()
+    private val baseRadius: Float = (maxOf(width, height) * (if (isPortrait) 0.56 else 0.68)).toFloat()
+    val radius: Float = (baseRadius * zoom).toFloat()
     // Strictly proportional to height (never pixel-clamped) so raster and vector projections match 1:1 at any resolution.
     val horizonTopY: Float = height * (if (isPortrait) 0.165f else 0.138f)
     val sphereCenterX: Float = width * 0.50f
-    val sphereCenterY: Float = run {
-        val overviewCy = horizonTopY + radius
-        if (zoom <= 1.25) {
-            overviewCy
-        } else {
-            val blend = ((zoom - 1.25) / 1.75).coerceIn(0.0, 1.0).toFloat()
-            overviewCy * (1f - blend) + (height * 0.72f + radius * 0.55f) * blend
-        }
-    }
-
     val focusScreenY: Float = height * (if (isPortrait) 0.50f else 0.54f)
 
     val lat0: Double = Math.toRadians(centerLat.coerceIn(-85.0, 85.0))
     val lon0: Double = Math.toRadians(centerLon)
     val rotRad: Double = Math.toRadians(headingRotationDeg)
 
-    // Pitch rotation around camera X-axis so (centerLat, centerLon) projects to focusScreenY
-    val pitchRad: Double = asin(((sphereCenterY - focusScreenY) / radius).toDouble().coerceIn(-0.82, 0.82))
+    // At overview (zoom <= 1.0), the northern limb sits at horizonTopY.
+    // As zoom increases above 1.0, the oblique tilt smoothly flattens toward nadir (0°)
+    // so zoomed-in regions are centered, undistorted, and fill the full screen.
+    private val overviewSinPitch: Double =
+        ((horizonTopY + baseRadius - focusScreenY) / baseRadius).toDouble().coerceIn(-0.80, 0.80)
+    private val tiltFactor: Double = if (zoom <= 1.0) 1.0 else (1.0 / (zoom * zoom)).coerceIn(0.0, 1.0)
+
+    // Pitch rotation around camera X-axis so (centerLat, centerLon) always projects to focusScreenY
+    val pitchRad: Double = asin((overviewSinPitch * tiltFactor).coerceIn(-0.80, 0.80))
 
     val sinLat0: Double = sin(lat0)
     val cosLat0: Double = cos(lat0)
@@ -65,6 +63,8 @@ class GlobeProjection(
     val cosRot: Double = cos(rotRad)
     val sinPitch: Double = sin(pitchRad)
     val cosPitch: Double = cos(pitchRad)
+
+    val sphereCenterY: Float = focusScreenY + (radius * sinPitch).toFloat()
 
     /**
      * Projects a geographic (lat, lon) coordinate onto 2D screen coordinates + visibility.

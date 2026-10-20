@@ -113,7 +113,8 @@ object GlobeLabelPlanner {
             text.length * sizePx * 0.56f
         }
     ): GlobeSceneLayout {
-        val topLimit = max(proj.horizonTopY + 22f, topSafePx)
+        val actualHorizonTopY = proj.sphereCenterY - proj.radius
+        val topLimit = max(actualHorizonTopY + 22f, topSafePx)
         val bottomLimit = proj.height - bottomSafePx
         val leftLimit = 42f
         val rightLimit = proj.width - 42f
@@ -206,7 +207,11 @@ object GlobeLabelPlanner {
         }
 
         // 5. Cities (single-line label • CityName, zoom-adaptive density)
-        val endpointExclusionKm = if (isOverview) 60.0 else 30.0
+        val endpointExclusionKm = when {
+            isOverview -> 60.0
+            proj.zoom < 3.0 -> 30.0
+            else -> 12.0
+        }
         val filteredCities = cities.filter { city ->
             val distOrigin = GreatCircle.distanceKm(city.point, plan.origin.point)
             val distDest = GreatCircle.distanceKm(city.point, plan.destination.point)
@@ -216,6 +221,8 @@ object GlobeLabelPlanner {
                 city.name in overviewPrimaryCities || city.population >= 800_000
             } else if (proj.zoom < 1.95) {
                 city.name in overviewPrimaryCities || city.population >= 150_000
+            } else if (proj.zoom < 3.2) {
+                city.name in overviewPrimaryCities || city.population >= 45_000
             } else {
                 true
             }
@@ -227,12 +234,14 @@ object GlobeLabelPlanner {
         val maxCities = when {
             isOverview -> 14
             proj.zoom < 1.95 -> 18
-            else -> 22
+            proj.zoom < 3.5 -> 24
+            else -> 30
         }
         val minCityDistPx = when {
             isOverview -> 92f
             proj.zoom < 1.95 -> 76f
-            else -> 64f
+            proj.zoom < 3.5 -> 62f
+            else -> 54f
         }
 
         for (city in filteredCities) {
@@ -258,7 +267,13 @@ object GlobeLabelPlanner {
         // 6. Country Labels (soft geographic context, nudged or skipped if a city/peak is at centroid)
         val allowedCountrySet = if (isOverview) overviewCountries else zoomedCountries
         val candidateCountries = countries
-            .filter { it.name in allowedCountrySet || (!isOverview && it.population >= 12_000_000) }
+            .filter {
+                it.iso != "LAKE" && it.iso != "RIVER" && (
+                    it.name in allowedCountrySet ||
+                        (!isOverview && it.population >= 5_000_000) ||
+                        (proj.zoom >= 2.2 && it.population >= 500_000)
+                    )
+            }
             .sortedByDescending { it.population }
 
         val maxCountries = if (isOverview) 9 else 13

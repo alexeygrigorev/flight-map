@@ -8,15 +8,20 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntSize
@@ -82,11 +87,11 @@ class GlobeCameraState(
             hypot(cameraLat - defaultCenter.lat, cameraLon - defaultCenter.lon) < 3.0
 
     fun zoomIn() {
-        zoom = (zoom * 1.32).coerceAtMost(3.6)
+        zoom = (zoom * 1.55).coerceAtMost(12.0)
     }
 
     fun zoomOut() {
-        zoom = (zoom / 1.32).coerceAtLeast(0.78)
+        zoom = (zoom / 1.55).coerceAtLeast(0.75)
     }
 
     fun resetToRouteOverview() {
@@ -101,9 +106,9 @@ class GlobeCameraState(
     fun toggleFollowPlane(progress: FlightProgress, candidateCities: List<City>) {
         followPlane = !followPlane
         if (followPlane) {
-            cameraLat = progress.point.lat.coerceIn(-75.0, 72.0)
+            cameraLat = progress.point.lat.coerceIn(-78.0, 78.0)
             cameraLon = progress.point.lon
-            if (zoom < 1.25) zoom = 1.35
+            if (zoom < 1.35) zoom = 1.65
             val nearestHub = candidateCities
                 .filter { it.population >= 45_000 && GreatCircle.distanceKm(it.point, progress.point) <= 320.0 }
                 .minByOrNull { GreatCircle.distanceKm(it.point, progress.point) }
@@ -120,9 +125,9 @@ class GlobeCameraState(
 
     fun focusPoint(pt: GeoPoint) {
         followPlane = false
-        cameraLat = pt.lat.coerceIn(-75.0, 72.0)
+        cameraLat = pt.lat.coerceIn(-78.0, 78.0)
         cameraLon = pt.lon
-        zoom = maxOf(zoom, 1.55)
+        zoom = maxOf(zoom, 2.2)
     }
 }
 
@@ -168,14 +173,25 @@ fun IfeGlobeView(
     // Smoothly track aircraft when followPlane is active
     LaunchedEffect(cameraState.followPlane, progress.point.lat, progress.point.lon) {
         if (cameraState.followPlane) {
-            cameraState.cameraLat = progress.point.lat.coerceIn(-75.0, 72.0)
+            cameraState.cameraLat = progress.point.lat.coerceIn(-78.0, 78.0)
             cameraState.cameraLon = progress.point.lon
         }
     }
 
-    val effectiveRotation = if (cameraState.headingUp) -(progress.heading - 90.0) else 0.0
+    val effectiveRotation = 0.0
 
-    val displayCities = remember(pack.plan, pack.cities, allCities) {
+    val camLatBucket = (cameraState.cameraLat * 2.0).roundToInt()
+    val camLonBucket = (cameraState.cameraLon * 2.0).roundToInt()
+    val camZoomBucket = (cameraState.zoom * 2.5).roundToInt()
+
+    val displayCities = remember(
+        pack.plan,
+        pack.cities,
+        allCities,
+        camLatBucket,
+        camLonBucket,
+        camZoomBucket
+    ) {
         val majorNames = setOf(
             "Helsinki", "Tallinn", "Riga", "Vilnius", "Warsaw", "Bucharest", "Tbilisi", "Baku",
             "Aktau", "Kyzylorda", "Shymkent", "Almaty", "Astana", "Tashkent", "Ürümqi", "Urumqi",
@@ -185,19 +201,45 @@ fun IfeGlobeView(
             "Surgut", "Novosibirsk", "Yekaterinburg", "Kazan", "Ufa", "Tehran", "Jerusalem",
             "Beijing", "Ulaanbaatar", "Seoul", "Tokyo", "Istanbul", "Kiev", "Kyiv", "Minsk"
         )
-        val picked = LinkedHashMap<String, City>()
+        val picked = LinkedHashMap<String, City>(320)
         for (c in allCities) {
             if (c.name in majorNames && c.name !in picked) {
                 picked[c.name] = c
             }
         }
-        for (c in PlaceLabels.overview(pack.plan, pack.cities, 36)) {
+        for (c in PlaceLabels.overview(pack.plan, pack.cities, 42)) {
             if (c.name !in picked) picked[c.name] = c
         }
-        for (c in allCities.take(180)) {
+        if (cameraState.zoom >= 1.25) {
+            val latHalfSpan = (54.0 / cameraState.zoom).coerceIn(4.5, 44.0)
+            val cosLat = cos(Math.toRadians(cameraState.cameraLat)).coerceAtLeast(0.22)
+            val lonHalfSpan = (latHalfSpan / cosLat).coerceAtMost(90.0)
+            val minLat = cameraState.cameraLat - latHalfSpan
+            val maxLat = cameraState.cameraLat + latHalfSpan
+            val cLon = cameraState.cameraLon
+            var localCount = 0
+            for (c in allCities) {
+                val lat = c.point.lat
+                if (lat < minLat || lat > maxLat) continue
+                var dLon = abs(c.point.lon - cLon)
+                if (dLon > 180.0) dLon = 360.0 - dLon
+                if (dLon <= lonHalfSpan) {
+                    if (c.name !in picked) {
+                        picked[c.name] = c
+                    }
+                    localCount++
+                    if (localCount >= 220) break
+                }
+            }
+        }
+        for (c in allCities.take(160)) {
             if (c.name !in picked) picked[c.name] = c
         }
         picked.values.toList()
+    }
+
+    val indexedRings = remember(countries) {
+        indexCountryRings(countries)
     }
 
     var reliefReady by remember { mutableStateOf(EarthReliefCache.width > 0) }
@@ -245,7 +287,20 @@ fun IfeGlobeView(
         )
     }
 
-    val sceneLayout = remember(projection, pack.plan, progress.point, displayCities, countries) {
+    val hasSelectedCard = cameraState.selectedFeature != null
+    val sceneLayout = remember(projection, pack.plan, progress.point, displayCities, countries, hasSelectedCard) {
+        val topSafe = if (projection.isPortrait) {
+            (projection.height * 0.11f).coerceAtLeast(96f)
+        } else {
+            (projection.height * 0.13f).coerceAtLeast(72f)
+        }
+        val bottomSafe = if (projection.isPortrait) {
+            if (hasSelectedCard) (projection.height * 0.28f).coerceAtLeast(220f)
+            else (projection.height * 0.14f).coerceAtLeast(140f)
+        } else {
+            if (hasSelectedCard) (projection.height * 0.34f).coerceAtLeast(180f)
+            else (projection.height * 0.14f).coerceAtLeast(92f)
+        }
         GlobeLabelPlanner.plan(
             proj = projection,
             plan = pack.plan,
@@ -254,8 +309,8 @@ fun IfeGlobeView(
             pins = IfeCatalog.landmarkPins,
             cities = displayCities,
             countries = countries,
-            topSafePx = 68f,
-            bottomSafePx = if (projection.isPortrait) 136f else 88f
+            topSafePx = topSafe,
+            bottomSafePx = bottomSafe
         )
     }
 
@@ -269,63 +324,142 @@ fun IfeGlobeView(
             .fillMaxSize()
             .onSizeChanged { if (it.width > 0 && it.height > 0) viewportSize = it }
             .pointerInput(Unit) {
-                detectDragGestures { change, dragAmount ->
-                    change.consume()
-                    cameraState.followPlane = false
-                    val degPerPx = (75.0 / maxOf(viewportSize.width, viewportSize.height)) / cameraState.zoom
-                    cameraState.cameraLon = (((cameraState.cameraLon - dragAmount.x * degPerPx) + 180.0) % 360.0 + 360.0) % 360.0 - 180.0
-                    cameraState.cameraLat = (cameraState.cameraLat + dragAmount.y * degPerPx * 0.75).coerceIn(-75.0, 75.0)
-                }
-            }
-            .pointerInput(Unit) {
-                detectTapGestures { tapOffset ->
-                    val proj = currentProjection
-                    val layout = currentSceneLayout
-                    var bestFeature: SelectedGlobeFeature? = null
-                    var bestDistPx = 56f
+                var lastSingleTapTimeMs = 0L
+                var lastSingleTapPos = Offset.Zero
 
-                    for (plannedPin in layout.pins) {
-                        val d = hypot(plannedPin.x - tapOffset.x, (plannedPin.y - 16f) - tapOffset.y)
-                        if (d < bestDistPx) {
-                            bestDistPx = d
-                            bestFeature = SelectedGlobeFeature.PinFeature(plannedPin.pin)
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val downTimeMs = System.currentTimeMillis()
+                    val downPos = down.position
+                    var lastPos = downPos
+                    var totalMovedPx = 0f
+                    var hadMultiTouch = false
+
+                    do {
+                        val event = awaitPointerEvent()
+                        val pressedCount = event.changes.count { it.pressed }
+                        if (pressedCount >= 2) {
+                            hadMultiTouch = true
                         }
-                    }
+                        val zoomChange = event.calculateZoom()
+                        val panChange = event.calculatePan()
+                        val centroid = event.calculateCentroid(useCurrent = false)
 
-                    for (plannedPeak in layout.peaks) {
-                        val d = hypot(plannedPeak.x - tapOffset.x, plannedPeak.y - tapOffset.y)
-                        if (d < bestDistPx) {
-                            bestDistPx = d
-                            bestFeature = SelectedGlobeFeature.PeakFeature(plannedPeak.peak)
-                        }
-                    }
+                        val isZooming = abs(zoomChange - 1f) > 0.002f
+                        val isPanning = panChange.getDistance() > 0.4f
 
-                    for (plannedCity in layout.cities) {
-                        val d = hypot(plannedCity.x - tapOffset.x, plannedCity.y - tapOffset.y)
-                        if (d < bestDistPx) {
-                            bestDistPx = d
-                            bestFeature = SelectedGlobeFeature.CityFeature(plannedCity.city)
-                        }
-                    }
+                        if (isZooming || isPanning) {
+                            totalMovedPx += panChange.getDistance() + abs(zoomChange - 1f) * 320f
+                            val oldZoom = cameraState.zoom
+                            val newZoom = (oldZoom * zoomChange.toDouble()).coerceIn(0.75, 12.0)
 
-                    if (bestFeature == null) {
-                        proj.unproject(tapOffset.x, tapOffset.y)?.let { (tapLat, tapLon, _) ->
-                            val tapGeo = GeoPoint(tapLat, tapLon)
-                            val allCandidates = (currentPackCities + currentDisplayCities).distinctBy { it.id }
-                            val prominent = allCandidates
-                                .filter { it.population >= 45_000 && GreatCircle.distanceKm(it.point, tapGeo) <= 260.0 }
-                                .minByOrNull { GreatCircle.distanceKm(it.point, tapGeo) }
-                            val fallback = allCandidates
-                                .minByOrNull { GreatCircle.distanceKm(it.point, tapGeo) }
-                                ?.takeIf { GreatCircle.distanceKm(it.point, tapGeo) <= 260.0 }
-                            val chosen = prominent ?: fallback
-                            if (chosen != null) {
-                                bestFeature = SelectedGlobeFeature.CityFeature(chosen)
+                            if (totalMovedPx > 6f || hadMultiTouch) {
+                                cameraState.followPlane = false
+                                val proj = currentProjection
+                                val w = maxOf(viewportSize.width, 1)
+                                val h = maxOf(viewportSize.height, 1)
+                                val degPerPx = (78.0 / maxOf(w, h).toDouble()) / newZoom
+                                val cosRot = proj.cosRot
+                                val sinRot = proj.sinRot
+
+                                // Include focal-point drift during 2-finger pinch so pinch zooms toward the fingers
+                                val pinchShiftX = if (pressedCount >= 2 && centroid != Offset.Unspecified) {
+                                    (centroid.x - proj.sphereCenterX) * (1.0 - oldZoom / newZoom) * 0.45
+                                } else {
+                                    0.0
+                                }
+                                val pinchShiftY = if (pressedCount >= 2 && centroid != Offset.Unspecified) {
+                                    (centroid.y - proj.focusScreenY) * (1.0 - oldZoom / newZoom) * 0.45
+                                } else {
+                                    0.0
+                                }
+
+                                val dx = panChange.x.toDouble() - pinchShiftX
+                                val dy = panChange.y.toDouble() - pinchShiftY
+
+                                val dEastPx = dx * cosRot - dy * sinRot
+                                val dNorthPx = dx * sinRot + dy * cosRot
+                                val cosLat = cos(Math.toRadians(cameraState.cameraLat)).coerceAtLeast(0.22)
+
+                                cameraState.zoom = newZoom
+                                cameraState.cameraLon = (((cameraState.cameraLon - (dEastPx * degPerPx) / cosLat) + 180.0) % 360.0 + 360.0) % 360.0 - 180.0
+                                cameraState.cameraLat = (cameraState.cameraLat + dNorthPx * degPerPx * 0.85).coerceIn(-78.0, 78.0)
+
+                                event.changes.forEach { change ->
+                                    if (change.positionChanged()) {
+                                        change.consume()
+                                    }
+                                }
                             }
                         }
-                    }
+                        event.changes.firstOrNull()?.let { lastPos = it.position }
+                    } while (event.changes.any { it.pressed })
 
-                    cameraState.selectedFeature = bestFeature
+                    val upTimeMs = System.currentTimeMillis()
+                    if (!hadMultiTouch && totalMovedPx < 22f && (upTimeMs - downTimeMs) < 450L) {
+                        val proj = currentProjection
+                        if (upTimeMs - lastSingleTapTimeMs < 320L && (lastPos - lastSingleTapPos).getDistance() < 64f) {
+                            // Double-tap zooms smoothly into the tapped geographic point
+                            cameraState.followPlane = false
+                            proj.unproject(lastPos.x, lastPos.y)?.let { (tapLat, tapLon, _) ->
+                                cameraState.cameraLat = (cameraState.cameraLat * 0.35 + tapLat * 0.65).coerceIn(-78.0, 78.0)
+                                cameraState.cameraLon = tapLon
+                            }
+                            cameraState.zoom = (cameraState.zoom * 1.75).coerceAtMost(10.0)
+                            lastSingleTapTimeMs = 0L
+                        } else {
+                            lastSingleTapTimeMs = upTimeMs
+                            lastSingleTapPos = lastPos
+
+                            val layout = currentSceneLayout
+                            var bestFeature: SelectedGlobeFeature? = null
+                            var bestDistPx = 56f
+
+                            for (plannedPin in layout.pins) {
+                                val d = hypot(plannedPin.x - lastPos.x, (plannedPin.y - 16f) - lastPos.y)
+                                if (d < bestDistPx) {
+                                    bestDistPx = d
+                                    bestFeature = SelectedGlobeFeature.PinFeature(plannedPin.pin)
+                                }
+                            }
+
+                            for (plannedPeak in layout.peaks) {
+                                val d = hypot(plannedPeak.x - lastPos.x, plannedPeak.y - lastPos.y)
+                                if (d < bestDistPx) {
+                                    bestDistPx = d
+                                    bestFeature = SelectedGlobeFeature.PeakFeature(plannedPeak.peak)
+                                }
+                            }
+
+                            for (plannedCity in layout.cities) {
+                                val d = hypot(plannedCity.x - lastPos.x, plannedCity.y - lastPos.y)
+                                if (d < bestDistPx) {
+                                    bestDistPx = d
+                                    bestFeature = SelectedGlobeFeature.CityFeature(plannedCity.city)
+                                }
+                            }
+
+                            if (bestFeature == null) {
+                                val searchRadiusKm = (260.0 / sqrt(proj.zoom)).coerceIn(60.0, 260.0)
+                                proj.unproject(lastPos.x, lastPos.y)?.let { (tapLat, tapLon, _) ->
+                                    val tapGeo = GeoPoint(tapLat, tapLon)
+                                    val allCandidates = (currentPackCities + currentDisplayCities).distinctBy { it.id }
+                                    val prominent = allCandidates
+                                        .filter { it.population >= 45_000 && GreatCircle.distanceKm(it.point, tapGeo) <= searchRadiusKm }
+                                        .minByOrNull { GreatCircle.distanceKm(it.point, tapGeo) }
+                                    val fallback = allCandidates
+                                        .minByOrNull { GreatCircle.distanceKm(it.point, tapGeo) }
+                                        ?.takeIf { GreatCircle.distanceKm(it.point, tapGeo) <= searchRadiusKm }
+                                    val chosen = prominent ?: fallback
+                                    if (chosen != null) {
+                                        bestFeature = SelectedGlobeFeature.CityFeature(chosen)
+                                    }
+                                }
+                            }
+
+                            cameraState.selectedFeature = bestFeature
+                        }
+                    }
                 }
             }
     ) {
@@ -343,13 +477,14 @@ fun IfeGlobeView(
                 // 2. Native full-DPI anti-aliased atmospheric horizon limb ring (eliminates any upscale staircase blocks)
                 drawNativeHorizonLimb(canvas, projection)
 
-                // 3. Subtle country borders clipped strictly to the 3D sphere disc
-                drawCountryBorders(canvas, projection, countries)
+                // 3. Subtle spherical graticule + 50m vector lakes, rivers, and country borders clipped strictly to the 3D sphere disc
+                drawGraticule(canvas, projection)
+                drawCountryBorders(canvas, projection, indexedRings)
 
                 // 4. Solar day/night terminator curve
                 drawSolarTerminator(canvas, projection, subsolar)
 
-                // 5. Planned/filed trajectory ribbon (flown trail + remaining airway + endpoint markers)
+                // 5. Planned/filed trajectory ribbon (flown trail + remaining airway + waypoint fixes + endpoint markers)
                 drawTrajectoryRibbon(canvas, projection, pack.plan, progress, sceneLayout.endpoints)
 
                 // 6. Decluttered, collision-free country names, mountain peaks, cities, and landmark pins
@@ -378,6 +513,35 @@ private fun drawNativeHorizonLimb(canvas: Canvas, proj: GlobeProjection) {
     }
     canvas.drawCircle(proj.sphereCenterX, proj.sphereCenterY, proj.radius + 1.5f, outerGlowPaint)
     canvas.drawCircle(proj.sphereCenterX, proj.sphereCenterY, proj.radius, innerRimPaint)
+}
+
+/**
+ * Smooth 2-octave procedural micro-relief [-1.0, 1.0] for tactile terrain grain at high zoom.
+ */
+private fun sampleMicroRelief(lat: Double, lon: Double): Double {
+    fun octave(freq: Double): Double {
+        val gx = (lon + 180.0) * freq
+        val gy = (lat + 90.0) * freq
+        val ix = gx.toInt()
+        val iy = gy.toInt()
+        val fx = gx - ix
+        val fy = gy - iy
+        val sx = fx * fx * (3.0 - 2.0 * fx)
+        val sy = fy * fy * (3.0 - 2.0 * fy)
+        fun h(x: Int, y: Int): Double {
+            var n = x * 374761393 + y * 668265263
+            n = (n xor (n ushr 13)) * 1274126177
+            return ((n xor (n ushr 16)) and 0xFFFF) * (1.0 / 32768.0) - 1.0
+        }
+        val n00 = h(ix, iy)
+        val n10 = h(ix + 1, iy)
+        val n01 = h(ix, iy + 1)
+        val n11 = h(ix + 1, iy + 1)
+        val nx0 = n00 + sx * (n10 - n00)
+        val nx1 = n01 + sx * (n11 - n01)
+        return nx0 + sy * (nx1 - nx0)
+    }
+    return octave(38.0) * 0.65 + octave(92.0) * 0.35
 }
 
 /**
@@ -423,8 +587,8 @@ private fun render3DGlobeRaster(
     texH: Int
 ): Bitmap {
     val isPortrait = proj.isPortrait
-    val targetW = if (isPortrait) 540 else 820
-    val targetH = ((proj.height.toDouble() / proj.width.toDouble()) * targetW).roundToInt().coerceIn(320, 860)
+    val targetW = if (isPortrait) 620 else 920
+    val targetH = ((proj.height.toDouble() / proj.width.toDouble()) * targetW).roundToInt().coerceIn(360, 960)
 
     val outPixels = IntArray(targetW * targetH)
     val cx = proj.sphereCenterX.toDouble()
@@ -511,13 +675,17 @@ private fun render3DGlobeRaster(
                 var baseB = 122
 
                 if (reliefPixels != null && texW > 1 && texH > 1) {
-                    // Bilinear texture interpolation for smooth, non-blocky terrain when zoomed in
+                    // C1 smoothstep sub-texel interpolation for silky, non-blocky terrain at high zoom
                     val uf = (((lon + 180.0) * (1.0 / 360.0)) * (texW - 1)).coerceIn(0.0, (texW - 1).toDouble())
                     val vf = (((90.0 - lat) * (1.0 / 180.0)) * (texH - 1)).coerceIn(0.0, (texH - 1).toDouble())
                     val u0 = uf.toInt().coerceIn(0, texW - 2)
                     val v0 = vf.toInt().coerceIn(0, texH - 2)
-                    val fu = ((uf - u0) * 256.0).toInt().coerceIn(0, 256)
-                    val fv = ((vf - v0) * 256.0).toInt().coerceIn(0, 256)
+                    val tu = (uf - u0).coerceIn(0.0, 1.0)
+                    val tv = (vf - v0).coerceIn(0.0, 1.0)
+                    val su = tu * tu * (3.0 - 2.0 * tu)
+                    val sv = tv * tv * (3.0 - 2.0 * tv)
+                    val fu = (su * 256.0).toInt().coerceIn(0, 256)
+                    val fv = (sv * 256.0).toInt().coerceIn(0, 256)
                     val invFu = 256 - fu
                     val invFv = 256 - fv
 
@@ -540,15 +708,25 @@ private fun render3DGlobeRaster(
                     baseB = (((c00 and 0xFF) * w00 + (c10 and 0xFF) * w10 +
                         (c01 and 0xFF) * w01 + (c11 and 0xFF) * w11) shr 16)
 
-                    if (baseB > baseR + 18 && baseB > baseG + 10) {
-                        baseR = (baseR * 0.85 + 8).toInt().coerceIn(6, 55)
-                        baseG = (baseG * 1.05 + 28).toInt().coerceIn(38, 135)
-                        baseB = (baseB * 1.18 + 52).toInt().coerceIn(95, 215)
-                    } else {
-                        baseR = (baseR * 1.14 + 18).toInt().coerceIn(24, 242)
-                        baseG = (baseG * 1.14 + 20).toInt().coerceIn(34, 242)
-                        baseB = (baseB * 1.08 + 14).toInt().coerceIn(22, 238)
+                    // Continuous, branchless tonal grading (no discontinuous color steps on coastlines or lakes)
+                    var rF = baseR * 1.08 + 10.0
+                    var gF = baseG * 1.09 + 12.0
+                    var bF = baseB * 1.08 + 12.0
+
+                    if (proj.zoom > 1.55) {
+                        val landWeight = ((gF + rF) * 0.5 - bF + 18.0).coerceIn(0.0, 36.0) * (1.0 / 36.0)
+                        if (landWeight > 0.02) {
+                            val zoomBlend = ((proj.zoom - 1.55) * 0.35).coerceIn(0.0, 1.0)
+                            val micro = sampleMicroRelief(lat, lon) * zoomBlend * landWeight * 10.5
+                            rF += micro
+                            gF += micro * 1.05
+                            bF += micro * 0.75
+                        }
                     }
+
+                    baseR = rF.toInt().coerceIn(6, 244)
+                    baseG = gF.toInt().coerceIn(22, 244)
+                    baseB = bF.toInt().coerceIn(20, 244)
                 }
 
                 // Direct 3D dot product with subsolar vector (no per-pixel trig!)
@@ -601,47 +779,227 @@ private fun render3DGlobeRaster(
     return Bitmap.createBitmap(outPixels, targetW, targetH, Bitmap.Config.ARGB_8888)
 }
 
-private fun drawCountryBorders(
-    canvas: Canvas,
-    proj: GlobeProjection,
-    countries: List<CountryBoundary>
-) {
-    val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = android.graphics.Color.argb(105, 226, 234, 248)
+private class IndexedRing(
+    val iso: String,
+    val points: List<GeoPoint>,
+    val cx: Double,
+    val cy: Double,
+    val cz: Double,
+    val maxAngRad: Double
+)
+
+private fun indexCountryRings(countries: List<CountryBoundary>): List<IndexedRing> {
+    val out = ArrayList<IndexedRing>(1600)
+    for (c in countries) {
+        for (ring in c.rings) {
+            if (ring.size < 2) continue
+            var sx = 0.0
+            var sy = 0.0
+            var sz = 0.0
+            for (pt in ring) {
+                val phi = Math.toRadians(pt.lat)
+                val lam = Math.toRadians(pt.lon)
+                val cosP = cos(phi)
+                sx += cosP * cos(lam)
+                sy += cosP * sin(lam)
+                sz += sin(phi)
+            }
+            val len = sqrt(sx * sx + sy * sy + sz * sz)
+            val cx = if (len > 1e-6) sx / len else 1.0
+            val cy = if (len > 1e-6) sy / len else 0.0
+            val cz = if (len > 1e-6) sz / len else 0.0
+            var minDot = 1.0
+            val step = maxOf(1, ring.size / 24)
+            var i = 0
+            while (i < ring.size) {
+                val pt = ring[i]
+                val phi = Math.toRadians(pt.lat)
+                val lam = Math.toRadians(pt.lon)
+                val cosP = cos(phi)
+                val d = (cosP * cos(lam)) * cx + (cosP * sin(lam)) * cy + sin(phi) * cz
+                if (d < minDot) minDot = d
+                i += step
+            }
+            val maxAng = acos(minDot.coerceIn(-1.0, 1.0)) + 0.08
+            out.add(IndexedRing(c.iso, ring, cx, cy, cz, maxAng))
+        }
+    }
+    return out
+}
+
+private fun drawGraticule(canvas: Canvas, proj: GlobeProjection) {
+    val stepDeg = when {
+        proj.zoom >= 5.0 -> 2
+        proj.zoom >= 2.2 -> 5
+        else -> 10
+    }
+    val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.argb(if (proj.zoom >= 2.0) 34 else 22, 165, 208, 248)
         style = Paint.Style.STROKE
-        strokeWidth = 1.0f
-        strokeJoin = Paint.Join.ROUND
+        strokeWidth = 0.9f
     }
     canvas.save()
     val clipDisc = Path().apply {
         addCircle(proj.sphereCenterX, proj.sphereCenterY, proj.radius - 1.5f, Path.Direction.CW)
     }
     canvas.clipPath(clipDisc)
+
+    val latSpan = (75.0 / proj.zoom).coerceIn(8.0, 85.0)
+    val minLat = ((proj.centerLat - latSpan).toInt() / stepDeg * stepDeg).coerceIn(-80, 80)
+    val maxLat = ((proj.centerLat + latSpan).toInt() / stepDeg * stepDeg).coerceIn(-80, 80)
+    val lonSpan = (latSpan / cos(Math.toRadians(proj.centerLat)).coerceAtLeast(0.25)).coerceIn(12.0, 180.0)
+    val minLon = ((proj.centerLon - lonSpan).toInt() / stepDeg * stepDeg).coerceIn(-180, 180)
+    val maxLon = ((proj.centerLon + lonSpan).toInt() / stepDeg * stepDeg).coerceIn(-180, 180)
+
+    val path = Path()
+    val sampleStep = maxOf(1, stepDeg / 2)
+    for (lat in minLat..maxLat step stepDeg) {
+        path.reset()
+        var penDown = false
+        var lon = minLon
+        while (lon <= maxLon) {
+            val p = proj.project(GeoPoint(lat.toDouble(), lon.toDouble()))
+            if (p.visible && p.z > 0.10) {
+                if (!penDown) {
+                    path.moveTo(p.x, p.y)
+                    penDown = true
+                } else {
+                    path.lineTo(p.x, p.y)
+                }
+            } else {
+                penDown = false
+            }
+            lon += sampleStep
+        }
+        if (!path.isEmpty) canvas.drawPath(path, gridPaint)
+    }
+    for (lon in minLon..maxLon step stepDeg) {
+        path.reset()
+        var penDown = false
+        var lat = minLat
+        while (lat <= maxLat) {
+            val p = proj.project(GeoPoint(lat.toDouble(), lon.toDouble()))
+            if (p.visible && p.z > 0.10) {
+                if (!penDown) {
+                    path.moveTo(p.x, p.y)
+                    penDown = true
+                } else {
+                    path.lineTo(p.x, p.y)
+                }
+            } else {
+                penDown = false
+            }
+            lat += sampleStep
+        }
+        if (!path.isEmpty) canvas.drawPath(path, gridPaint)
+    }
+    canvas.restore()
+}
+
+private fun drawCountryBorders(
+    canvas: Canvas,
+    proj: GlobeProjection,
+    indexedRings: List<IndexedRing>
+) {
+    val zoomBoost = (proj.zoom.toFloat() - 1.0f).coerceIn(0f, 3.0f)
+    val borderHaloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.argb(95, 8, 18, 36)
+        style = Paint.Style.STROKE
+        strokeWidth = 2.2f + zoomBoost * 0.25f
+        strokeJoin = Paint.Join.ROUND
+        strokeCap = Paint.Cap.ROUND
+    }
+    val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.argb((118 + zoomBoost * 18f).toInt().coerceAtMost(185), 224, 236, 252)
+        style = Paint.Style.STROKE
+        strokeWidth = 1.05f + zoomBoost * 0.15f
+        strokeJoin = Paint.Join.ROUND
+        strokeCap = Paint.Cap.ROUND
+    }
+    val lakeFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.argb(120, 14, 52, 102)
+        style = Paint.Style.FILL
+    }
+    val lakeShorePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.argb(145, 105, 188, 242)
+        style = Paint.Style.STROKE
+        strokeWidth = 1.0f + zoomBoost * 0.12f
+        strokeJoin = Paint.Join.ROUND
+    }
+    val riverPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.argb((85 + zoomBoost * 24f).toInt().coerceAtMost(165), 88, 178, 238)
+        style = Paint.Style.STROKE
+        strokeWidth = 1.15f + zoomBoost * 0.18f
+        strokeJoin = Paint.Join.ROUND
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    canvas.save()
+    val clipDisc = Path().apply {
+        addCircle(proj.sphereCenterX, proj.sphereCenterY, proj.radius - 1.5f, Path.Direction.CW)
+    }
+    canvas.clipPath(clipDisc)
+
+    // Camera center 3D unit vector and angular field-of-view radius for fast frustum culling
+    val camPhi = Math.toRadians(proj.centerLat)
+    val camLam = Math.toRadians(proj.centerLon)
+    val camCosP = cos(camPhi)
+    val camX = camCosP * cos(camLam)
+    val camY = camCosP * sin(camLam)
+    val camZ = sin(camPhi)
+    val halfDiagPx = hypot(proj.width.toDouble(), proj.height.toDouble()) * 0.55
+    val fovAngRad = asin((halfDiagPx / proj.radius.toDouble()).coerceIn(0.05, 1.0)) + 0.25
+
     val path = Path()
     val maxSegmentPx = proj.radius * 0.14f
-    for (country in countries) {
-        for (ring in country.rings) {
-            path.reset()
-            var penDown = false
-            var prevX = 0f
-            var prevY = 0f
-            for (pt in ring) {
-                val p = proj.project(pt)
-                if (p.visible && p.z > 0.08) {
-                    if (!penDown || hypot((p.x - prevX).toDouble(), (p.y - prevY).toDouble()) > maxSegmentPx) {
-                        path.moveTo(p.x, p.y)
-                        penDown = true
-                    } else {
-                        path.lineTo(p.x, p.y)
-                    }
-                    prevX = p.x
-                    prevY = p.y
+
+    for (ring in indexedRings) {
+        if (ring.iso == "RIVER" && proj.zoom < 1.30) continue
+
+        val dot = ring.cx * camX + ring.cy * camY + ring.cz * camZ
+        val maxCos = cos((fovAngRad + ring.maxAngRad).coerceAtMost(Math.PI))
+        if (dot < maxCos) continue
+
+        path.reset()
+        var penDown = false
+        var prevX = 0f
+        var prevY = 0f
+        var allVisible = true
+        for (pt in ring.points) {
+            val p = proj.project(pt)
+            if (p.visible && p.z > 0.06) {
+                if (!penDown || hypot((p.x - prevX).toDouble(), (p.y - prevY).toDouble()) > maxSegmentPx) {
+                    path.moveTo(p.x, p.y)
+                    penDown = true
+                    if (prevX != 0f || prevY != 0f) allVisible = false
                 } else {
-                    penDown = false
+                    path.lineTo(p.x, p.y)
                 }
+                prevX = p.x
+                prevY = p.y
+            } else {
+                penDown = false
+                allVisible = false
             }
-            if (!path.isEmpty) {
-                canvas.drawPath(path, borderPaint)
+        }
+        if (!path.isEmpty) {
+            when (ring.iso) {
+                "LAKE" -> {
+                    if (allVisible && proj.zoom >= 1.35) {
+                        path.close()
+                        canvas.drawPath(path, lakeFillPaint)
+                    }
+                    canvas.drawPath(path, lakeShorePaint)
+                }
+                "RIVER" -> {
+                    canvas.drawPath(path, riverPaint)
+                }
+                else -> {
+                    if (proj.zoom >= 1.65) {
+                        canvas.drawPath(path, borderHaloPaint)
+                    }
+                    canvas.drawPath(path, borderPaint)
+                }
             }
         }
     }
@@ -834,7 +1192,8 @@ private fun drawTrajectoryRibbon(
     endpoints: List<PlannedEndpoint>
 ) {
     val waypoints = plan.effectiveWaypoints
-    val densePoints = GreatCircle.routeWaypoints(waypoints, 180)
+    val segCount = if (proj.zoom >= 2.2) 360 else 200
+    val densePoints = GreatCircle.routeWaypoints(waypoints, segCount)
     if (densePoints.size < 2) return
 
     val splitIdx = (progress.fraction * (densePoints.size - 1)).roundToInt().coerceIn(0, densePoints.lastIndex)
@@ -844,30 +1203,35 @@ private fun drawTrajectoryRibbon(
         style = Paint.Style.STROKE
         strokeWidth = 6.5f
         strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
     }
     val aheadGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = android.graphics.Color.argb(80, 125, 211, 252)
         style = Paint.Style.STROKE
         strokeWidth = 6.0f
         strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
     }
     val aheadCorePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = android.graphics.Color.argb(215, 224, 242, 254)
         style = Paint.Style.STROKE
         strokeWidth = 2.5f
         strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
     }
     val flownGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = android.graphics.Color.argb(145, 56, 189, 248)
         style = Paint.Style.STROKE
         strokeWidth = 8.0f
         strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
     }
     val flownCorePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = android.graphics.Color.WHITE
         style = Paint.Style.STROKE
         strokeWidth = 3.2f
         strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
     }
 
     fun buildProjectedPath(points: List<GeoPoint>, yOffset: Float = 0f): Path {
@@ -893,7 +1257,9 @@ private fun drawTrajectoryRibbon(
     if (!fullShadowPath.isEmpty) canvas.drawPath(fullShadowPath, shadowPaint)
 
     if (splitIdx < densePoints.lastIndex) {
-        val aheadPts = densePoints.subList(splitIdx, densePoints.size)
+        val aheadPts = ArrayList<GeoPoint>(densePoints.size - splitIdx + 1)
+        aheadPts.add(progress.point)
+        aheadPts.addAll(densePoints.subList((splitIdx + 1).coerceAtMost(densePoints.lastIndex), densePoints.size))
         val aheadPath = buildProjectedPath(aheadPts)
         if (!aheadPath.isEmpty) {
             canvas.drawPath(aheadPath, aheadGlowPaint)
@@ -902,11 +1268,40 @@ private fun drawTrajectoryRibbon(
     }
 
     if (splitIdx > 0) {
-        val flownPts = densePoints.subList(0, splitIdx + 1)
+        val flownPts = ArrayList<GeoPoint>(splitIdx + 2)
+        flownPts.addAll(densePoints.subList(0, splitIdx))
+        flownPts.add(progress.point)
         val flownPath = buildProjectedPath(flownPts)
         if (!flownPath.isEmpty) {
             canvas.drawPath(flownPath, flownGlowPaint)
             canvas.drawPath(flownPath, flownCorePaint)
+        }
+    }
+
+    // Subtle aviation RNAV diamond waypoint fixes along the route when zoomed in
+    if (proj.zoom >= 1.85 && waypoints.size > 2) {
+        val wpFill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.rgb(15, 23, 42)
+            style = Paint.Style.FILL
+        }
+        val wpStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.rgb(125, 211, 252)
+            style = Paint.Style.STROKE
+            strokeWidth = 1.6f
+        }
+        val diamond = Path()
+        for (i in 1 until waypoints.lastIndex) {
+            val p = proj.project(waypoints[i])
+            if (!p.visible || p.z < 0.15) continue
+            val r = 4.2f
+            diamond.reset()
+            diamond.moveTo(p.x, p.y - r)
+            diamond.lineTo(p.x + r, p.y)
+            diamond.lineTo(p.x, p.y + r)
+            diamond.lineTo(p.x - r, p.y)
+            diamond.close()
+            canvas.drawPath(diamond, wpFill)
+            canvas.drawPath(diamond, wpStroke)
         }
     }
 

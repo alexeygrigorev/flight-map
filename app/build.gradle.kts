@@ -16,7 +16,9 @@ plugins {
 val repoRoot = rootProject.projectDir
 
 val releaseSigning: Map<String, String>? = run {
-    val propsFile = File(repoRoot, "keystore.properties")
+    val repoProps = File(repoRoot, "keystore.properties")
+    val homeProps = File(System.getProperty("user.home"), ".flight-map/keystore.properties")
+    val propsFile = if (repoProps.isFile) repoProps else homeProps
     if (propsFile.isFile) {
         val props = Properties()
         propsFile.inputStream().use { stream -> props.load(stream) }
@@ -75,8 +77,8 @@ android {
         applicationId = "com.flightmap.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.2.2"
+        versionCode = 5
+        versionName = "0.2.3"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     signingConfigs {

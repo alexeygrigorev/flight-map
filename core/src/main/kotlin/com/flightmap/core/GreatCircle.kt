@@ -148,6 +148,39 @@ object GreatCircle {
     }
 
     /**
+     * Generates a C1-smooth fly-by waypoint chain by replacing sharp interior waypoint corners
+     * with quadratic spherical Bezier turn arcs (RNAV fly-by filleting).
+     */
+    fun smoothWaypoints(waypoints: List<GeoPoint>, arcSteps: Int = 6): List<GeoPoint> {
+        if (waypoints.size <= 2) return waypoints
+        val out = ArrayList<GeoPoint>(waypoints.size * (arcSteps + 1))
+        out.add(waypoints.first())
+        for (i in 1 until waypoints.lastIndex) {
+            val prev = waypoints[i - 1]
+            val curr = waypoints[i]
+            val next = waypoints[i + 1]
+            val dPrev = distanceKm(prev, curr)
+            val dNext = distanceKm(curr, next)
+            if (dPrev < 1.0 || dNext < 1.0) {
+                out.add(curr)
+                continue
+            }
+            val fPrev = (80.0 / dPrev).coerceIn(0.08, 0.28)
+            val fNext = (80.0 / dNext).coerceIn(0.08, 0.28)
+            val pIn = interpolate(curr, prev, fPrev)
+            val pOut = interpolate(curr, next, fNext)
+            for (s in 0..arcSteps) {
+                val t = s.toDouble() / arcSteps.toDouble()
+                val q0 = interpolate(pIn, curr, t)
+                val q1 = interpolate(curr, pOut, t)
+                out.add(interpolate(q0, q1, t))
+            }
+        }
+        out.add(waypoints.last())
+        return out
+    }
+
+    /**
      * Interpolates position and forward heading along a multi-waypoint trajectory at [fraction] in [0.0, 1.0].
      */
     fun interpolateWaypointsWithHeading(waypoints: List<GeoPoint>, fraction: Double): Pair<GeoPoint, Double> {
@@ -168,22 +201,23 @@ object GreatCircle {
             return pt to hdg
         }
 
+        val pts = smoothWaypoints(waypoints)
         val clamped = fraction.coerceIn(0.0, 1.0)
-        val segLengths = DoubleArray(waypoints.size - 1)
+        val segLengths = DoubleArray(pts.size - 1)
         var totalKm = 0.0
-        for (i in 0 until waypoints.size - 1) {
-            val d = distanceKm(waypoints[i], waypoints[i + 1])
+        for (i in 0 until pts.size - 1) {
+            val d = distanceKm(pts[i], pts[i + 1])
             segLengths[i] = d
             totalKm += d
         }
-        if (totalKm < 1e-4) return waypoints.first() to 0.0
+        if (totalKm < 1e-4) return pts.first() to 0.0
         if (clamped <= 0.0) {
-            return waypoints.first() to heading(waypoints[0], waypoints[1])
+            return pts.first() to heading(pts[0], pts[1])
         }
         if (clamped >= 1.0) {
-            val n = waypoints.size
-            val nearEnd = interpolate(waypoints[n - 2], waypoints[n - 1], 0.98)
-            return waypoints.last() to heading(nearEnd, waypoints.last())
+            val n = pts.size
+            val nearEnd = interpolate(pts[n - 2], pts[n - 1], 0.98)
+            return pts.last() to heading(nearEnd, pts.last())
         }
 
         val targetKm = totalKm * clamped
@@ -192,31 +226,48 @@ object GreatCircle {
             val segLen = segLengths[i]
             if (accum + segLen >= targetKm || i == segLengths.lastIndex) {
                 val localFrac = if (segLen > 1e-6) ((targetKm - accum) / segLen).coerceIn(0.0, 1.0) else 0.0
-                val pt = interpolate(waypoints[i], waypoints[i + 1], localFrac)
+                val pt = interpolate(pts[i], pts[i + 1], localFrac)
                 val hdg = if (localFrac >= 0.995) {
-                    val prevPt = interpolate(waypoints[i], waypoints[i + 1], 0.95)
-                    heading(prevPt, waypoints[i + 1])
+                    val prevPt = interpolate(pts[i], pts[i + 1], 0.95)
+                    heading(prevPt, pts[i + 1])
                 } else {
-                    heading(pt, waypoints[i + 1])
+                    heading(pt, pts[i + 1])
                 }
                 return pt to hdg
             }
             accum += segLen
         }
-        return waypoints.last() to 0.0
+        return pts.last() to 0.0
     }
 
     /**
      * Generates evenly spaced points along a multi-waypoint trajectory.
      */
-    fun routeWaypoints(waypoints: List<GeoPoint>, segments: Int = 128): List<GeoPoint> {
+    fun routeWaypoints(waypoints: List<GeoPoint>, segments: Int = 180): List<GeoPoint> {
         if (waypoints.size < 2) return waypoints
         if (waypoints.size == 2) return route(waypoints[0], waypoints[1], segments)
         if (segments <= 1) return listOf(waypoints.first(), waypoints.last())
+        val pts = smoothWaypoints(waypoints)
+        val segLengths = DoubleArray(pts.size - 1)
+        var totalKm = 0.0
+        for (i in 0 until pts.size - 1) {
+            val d = distanceKm(pts[i], pts[i + 1])
+            segLengths[i] = d
+            totalKm += d
+        }
+        if (totalKm < 1e-4) return listOf(pts.first(), pts.last())
         val result = ArrayList<GeoPoint>(segments + 1)
-        for (i in 0..segments) {
-            val frac = i.toDouble() / segments.toDouble()
-            result.add(interpolateWaypointsWithHeading(waypoints, frac).first)
+        var segIdx = 0
+        var accum = 0.0
+        for (s in 0..segments) {
+            val targetKm = totalKm * (s.toDouble() / segments.toDouble())
+            while (segIdx < segLengths.lastIndex && accum + segLengths[segIdx] < targetKm) {
+                accum += segLengths[segIdx]
+                segIdx++
+            }
+            val segLen = segLengths[segIdx]
+            val localFrac = if (segLen > 1e-6) ((targetKm - accum) / segLen).coerceIn(0.0, 1.0) else 0.0
+            result.add(interpolate(pts[segIdx], pts[segIdx + 1], localFrac))
         }
         return result
     }

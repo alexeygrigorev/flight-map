@@ -371,6 +371,115 @@ class TrajectoryAndGlobeTest {
         assertTrue(series.first().time <= dep)
         assertTrue(series.last().time >= arr)
     }
+
+    @Test
+    fun testHighZoomGlobeProjectionFillsViewportAndFlattensTilt() {
+        val overview = GlobeProjection(width = 1080f, height = 2400f, centerLat = 30.5, centerLon = 114.3, zoom = 1.0)
+        val zoomed = GlobeProjection(width = 1080f, height = 2400f, centerLat = 30.5, centerLon = 114.3, zoom = 4.5)
+        val deepZoom = GlobeProjection(width = 1080f, height = 2400f, centerLat = 30.5, centerLon = 114.3, zoom = 10.0)
+
+        // Camera tilt must flatten smoothly as zoom increases so zoomed-in map isn't foreshortened
+        assertTrue("Zoomed pitch (${zoomed.pitchRad}) must be flatter than overview (${overview.pitchRad})", zoomed.pitchRad < overview.pitchRad * 0.2)
+        assertTrue("Deep zoom pitch (${deepZoom.pitchRad}) must be near-nadir (< 0.02 rad)", deepZoom.pitchRad < 0.02)
+
+        // Focus point (30.5, 114.3) must stay anchored at (sphereCenterX, focusScreenY) across all zoom levels
+        for (proj in listOf(overview, zoomed, deepZoom)) {
+            val p = proj.project(GeoPoint(30.5, 114.3))
+            assertTrue(p.visible)
+            assertEquals(proj.sphereCenterX, p.x, 1.5f)
+            assertEquals(proj.focusScreenY, p.y, 1.5f)
+
+            val inv = proj.unproject(p.x, p.y)
+            assertNotNull(inv)
+            assertEquals(30.5, inv!!.first, 0.03)
+            assertEquals(114.3, inv.second, 0.03)
+        }
+
+        // At zoom = 4.5, the top of the screen (y = 140f) is covered by the Earth, not outer space
+        assertNotNull("Upper viewport should project onto Earth at zoom 4.5", zoomed.unproject(540f, 140f))
+    }
+
+    @Test
+    fun testSmoothWaypointsAndHighZoomLabelPlanner() {
+        val dyg = Airport("DYG", "Zhangjiajie Hehua", GeoPoint(29.1028, 110.4431), "Asia/Shanghai")
+        val mu689 = TrajectoryCatalog.resolvePlan("MU689", "2026-10-20", listOf(hel, pvg, dyg))
+        val rawWps = mu689.effectiveWaypoints
+        val smoothed = GreatCircle.smoothWaypoints(rawWps)
+        assertTrue("Smoothed trajectory should expand interior corners into smooth arcs", smoothed.size > rawWps.size * 3)
+        assertEquals(rawWps.first(), smoothed.first())
+        assertEquals(rawWps.last(), smoothed.last())
+
+        val zoomedProj = GlobeProjection(width = 1080f, height = 2400f, centerLat = 30.2, centerLon = 114.5, zoom = 4.2)
+        val midNow = Instant.parse("2026-10-20T03:00:00Z")
+        val progress = FlightTiming.progress(mu689, midNow)
+        val regionalCities = listOf(
+            City("wuh", "Wuhan", "CN", GeoPoint(30.5928, 114.3055), "Asia/Shanghai", 11_000_000),
+            City("ezh", "Ezhou", "CN", GeoPoint(30.3908, 114.8950), "Asia/Shanghai", 1_079_000),
+            City("hgn", "Huanggang", "CN", GeoPoint(30.4539, 114.8722), "Asia/Shanghai", 360_000),
+            City("xnt", "Xiantao", "CN", GeoPoint(30.3625, 113.4539), "Asia/Shanghai", 1_100_000),
+            City("jzn", "Jingzhou", "CN", GeoPoint(30.3340, 112.2390), "Asia/Shanghai", 5_230_000),
+            City("chn", "Changde", "CN", GeoPoint(29.0317, 111.6985), "Asia/Shanghai", 5_270_000)
+        )
+        val countriesWithLakes = listOf(
+            CountryBoundary("China", "CN", GeoPoint(35.0, 105.0), 1_400_000_000L),
+            CountryBoundary("Lake Dongting", "LAKE", GeoPoint(29.3, 112.9), 0L),
+            CountryBoundary("Yangtze", "RIVER", GeoPoint(30.5, 114.3), 0L)
+        )
+
+        val layout = GlobeLabelPlanner.plan(
+            proj = zoomedProj,
+            plan = mu689,
+            progress = progress,
+            peaks = IfeCatalog.mountainPeaks,
+            pins = IfeCatalog.landmarkPins,
+            cities = regionalCities,
+            countries = countriesWithLakes
+        )
+
+        assertTrue("High-zoom planner should place multiple regional cities", layout.cities.size >= 3)
+        assertFalse("LAKE entries must not be placed as sovereign country labels", layout.countries.any { it.name == "Lake Dongting" })
+        assertFalse("RIVER entries must not be placed as sovereign country labels", layout.countries.any { it.name == "Yangtze" })
+    }
+
+    @Test
+    fun testGeographicNorthSouthEastWestOrderingOnScreen() {
+        // Verify North-Up projection maps northern cities (Harbin, Beijing, Seoul) strictly above (smaller screen Y)
+        // central cities (Wuhan, Shanghai) and southern cities (Hanoi), and eastern cities strictly to the right (larger screen X).
+        val harbin = GeoPoint(45.75, 126.65)
+        val beijing = GeoPoint(39.9042, 116.4074)
+        val seoul = GeoPoint(37.5665, 126.9780)
+        val shanghai = GeoPoint(31.2304, 121.4737)
+        val wuhan = GeoPoint(30.5928, 114.3055)
+        val hanoi = GeoPoint(21.0285, 105.8542)
+
+        for (zoom in listOf(1.0, 2.2, 4.5)) {
+            val proj = GlobeProjection(
+                width = 1080f,
+                height = 2400f,
+                centerLat = 30.5928,
+                centerLon = 114.3055,
+                zoom = zoom,
+                headingRotationDeg = 0.0
+            )
+            val pHarbin = proj.project(harbin)
+            val pBeijing = proj.project(beijing)
+            val pSeoul = proj.project(seoul)
+            val pShanghai = proj.project(shanghai)
+            val pWuhan = proj.project(wuhan)
+            val pHanoi = proj.project(hanoi)
+
+            // North -> South must have strictly increasing screen Y (top of screen = smaller Y = North)
+            assertTrue("Harbin (${pHarbin.y}) must be north of (above) Beijing (${pBeijing.y}) at zoom=$zoom", pHarbin.y < pBeijing.y)
+            assertTrue("Beijing (${pBeijing.y}) must be north of (above) Wuhan (${pWuhan.y}) at zoom=$zoom", pBeijing.y < pWuhan.y)
+            assertTrue("Seoul (${pSeoul.y}) must be north of (above) Shanghai (${pShanghai.y}) at zoom=$zoom", pSeoul.y < pShanghai.y)
+            assertTrue("Wuhan (${pWuhan.y}) must be north of (above) Hanoi (${pHanoi.y}) at zoom=$zoom", pWuhan.y < pHanoi.y)
+
+            // West -> East must have strictly increasing screen X (left = West, right = East)
+            assertTrue("Hanoi (${pHanoi.x}) must be west of (left of) Wuhan (${pWuhan.x}) at zoom=$zoom", pHanoi.x < pWuhan.x)
+            assertTrue("Wuhan (${pWuhan.x}) must be west of (left of) Shanghai (${pShanghai.x}) at zoom=$zoom", pWuhan.x < pShanghai.x)
+            assertTrue("Beijing (${pBeijing.x}) must be west of (left of) Seoul (${pSeoul.x}) at zoom=$zoom", pBeijing.x < pSeoul.x)
+        }
+    }
 }
 
 
