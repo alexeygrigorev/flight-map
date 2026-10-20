@@ -16,8 +16,12 @@ import androidx.compose.foundation.gestures.calculateRotation
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
@@ -26,6 +30,8 @@ import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.flightmap.core.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -65,6 +71,14 @@ object EarthReliefCache {
         }
     }
 }
+
+/**
+ * Decoded high-detail corridor raster tiles (NASA GIBS Blue Marble, public domain,
+ * cached offline during preparation) covering the current viewport. Tiles absent
+ * from the map fall back to the bundled relief texture - the globe never touches
+ * the network in flight.
+ */
+data class ImageryOverlay(val zoom: Int, val tiles: Map<Long, IntArray>)
 
 sealed class SelectedGlobeFeature {
     data class CityFeature(val city: City) : SelectedGlobeFeature()
@@ -271,13 +285,44 @@ fun IfeGlobeView(
         )
     }
 
+    // High-detail corridor imagery (offline cache): z7 once zoomed past overview, z8 deeper.
+    // Outside cached coverage the renderer falls back to bundled relief - never network.
+    val corridorTiles = remember(context) { CorridorTiles(context) }
+    val imageryZoom = remember(cameraState.zoom) {
+        when {
+            cameraState.zoom >= 3.4 -> 8
+            cameraState.zoom >= 2.0 -> 7
+            else -> -1
+        }
+    }
+    var imageryOverlay by remember(pack.mapTileKey) { mutableStateOf<ImageryOverlay?>(null) }
+    LaunchedEffect(pack.mapTileKey, imageryZoom, camLatBucket, camLonBucket, camZoomBucket, viewportSize) {
+        if (pack.mapTileKey == null || imageryZoom < 0) {
+            imageryOverlay = null
+            return@LaunchedEffect
+        }
+        imageryOverlay = withContext(Dispatchers.IO) {
+            loadImageryOverlay(corridorTiles, pack.mapTileKey, projection, imageryZoom)
+        }
+    }
+    val imageryAlpha = remember(cameraState.zoom, imageryZoom, imageryOverlay) {
+        if (imageryOverlay == null || imageryZoom < 0) {
+            0f
+        } else {
+            val rampStart = if (imageryZoom == 8) 3.2 else 2.0
+            ((cameraState.zoom - rampStart) / 0.8).toFloat().coerceIn(0f, 1f)
+        }
+    }
+
     // Render the 3D globe raster synchronously in lockstep with `projection` using parallel CPU workers
     // so vector borders, route lines, and satellite relief NEVER lag or drift apart during pan/zoom.
     val globeBitmap = remember(
         projection,
         (subsolar.lat * 4).roundToInt(),
         (subsolar.lon * 4).roundToInt(),
-        reliefReady
+        reliefReady,
+        imageryOverlay,
+        imageryAlpha
     ) {
         val reliefPixels = if (reliefReady) EarthReliefCache.ensureLoaded(context) else null
         render3DGlobeRaster(
@@ -285,7 +330,9 @@ fun IfeGlobeView(
             subsolar = subsolar,
             reliefPixels = reliefPixels,
             texW = EarthReliefCache.width,
-            texH = EarthReliefCache.height
+            texH = EarthReliefCache.height,
+            imagery = imageryOverlay,
+            imageryAlpha = imageryAlpha
         )
     }
 
@@ -490,7 +537,101 @@ fun IfeGlobeView(
                 drawAircraftIcon(canvas, projection, progress)
             }
         }
+
+        // Visible map attribution (ODbL/OpenFreeMap terms + NASA public-domain imagery).
+        Text(
+            text = "© OpenStreetMap contributors · OpenFreeMap · OpenMapTiles | Imagery: NASA Visible Earth",
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 8.dp, bottom = 4.dp),
+            color = Color.White.copy(alpha = 0.55f),
+            fontSize = 9.sp,
+            maxLines = 1
+        )
     }
+}
+
+/**
+ * Loads decoded corridor imagery tiles covering the current viewport from the
+ * offline cache (file reads only). Returns null when nothing cached is visible,
+ * letting the renderer fall back to bundled relief.
+ */
+private suspend fun loadImageryOverlay(
+    tiles: CorridorTiles,
+    flightKey: String,
+    proj: GlobeProjection,
+    zoom: Int
+): ImageryOverlay? {
+    val w = proj.width
+    val h = proj.height
+    val pts = listOf(
+        proj.unproject(0f, 0f),
+        proj.unproject(w, 0f),
+        proj.unproject(0f, h),
+        proj.unproject(w, h),
+        proj.unproject(w / 2f, h / 2f)
+    ).filterNotNull()
+    if (pts.size < 2) return null
+    val n = 1 shl zoom.coerceIn(0, 8)
+    val minLat = pts.minOf { it.first }
+    val maxLat = pts.maxOf { it.first }
+    val yNorth = SlippyTiles.tileY(maxLat, zoom)
+    val ySouth = SlippyTiles.tileY(minLat, zoom)
+    val yRange = (minOf(yNorth, ySouth) - 1).coerceAtLeast(0)..(maxOf(yNorth, ySouth) + 1).coerceAtMost(n - 1)
+    val lons = pts.map { it.second }
+    val xRange = if (lons.max() - lons.min() > 180.0) {
+        // Date line inside the viewport: scan all columns; the tile cap trims.
+        0 until n
+    } else {
+        val xWest = SlippyTiles.tileX(lons.min(), zoom)
+        val xEast = SlippyTiles.tileX(lons.max(), zoom)
+        (minOf(xWest, xEast) - 1).coerceAtLeast(0)..(maxOf(xWest, xEast) + 1).coerceAtMost(n - 1)
+    }
+    val map = tiles.loadViewport(flightKey, zoom, xRange, yRange)
+    return if (map.isEmpty()) null else ImageryOverlay(zoom, map)
+}
+
+/**
+ * Bilinear sample of a cached 256px imagery tile at the given geo position.
+ * Returns null when no cached tile covers the position (renderer falls back).
+ */
+private fun sampleImageryBilinear(imagery: ImageryOverlay, lat: Double, lon: Double): Triple<Int, Int, Int>? {
+    val z = imagery.zoom
+    val n = 1 shl z.coerceIn(0, 8)
+    val fx = (lon + 180.0) / 360.0 * n
+    val latC = lat.coerceIn(-SlippyTiles.MAX_LATITUDE, SlippyTiles.MAX_LATITUDE)
+    val latRad = Math.toRadians(latC)
+    val fy = (1.0 - ln(tan(latRad) + 1.0 / cos(latRad)) / Math.PI) / 2.0 * n
+    val xi = floor(fx).toInt()
+    val yi = floor(fy).toInt()
+    if (yi < 0 || yi >= n) return null
+    val xx = ((xi % n) + n) % n
+    val tex = imagery.tiles[CorridorImagery.encodeKey(z, xx, yi)] ?: return null
+    val u = (fx - floor(fx)).coerceIn(0.0, 1.0)
+    val v = (fy - floor(fy)).coerceIn(0.0, 1.0)
+    val tx = (u * 255.0).toInt().coerceIn(0, 255)
+    val ty = (v * 255.0).toInt().coerceIn(0, 255)
+    val tx1 = (tx + 1).coerceAtMost(255)
+    val ty1 = (ty + 1).coerceAtMost(255)
+    val fu = ((u * 255.0 - tx) * 256.0).toInt().coerceIn(0, 256)
+    val fv = ((v * 255.0 - ty) * 256.0).toInt().coerceIn(0, 256)
+    val iu = 256 - fu
+    val iv = 256 - fv
+    val row0 = ty * 256
+    val row1 = ty1 * 256
+    val c00 = tex[row0 + tx]
+    val c10 = tex[row0 + tx1]
+    val c01 = tex[row1 + tx]
+    val c11 = tex[row1 + tx1]
+    val w00 = iu * iv
+    val w10 = fu * iv
+    val w01 = iu * fv
+    val w11 = fu * fv
+    val r = (((c00 shr 16 and 0xFF) * w00 + (c10 shr 16 and 0xFF) * w10 +
+        (c01 shr 16 and 0xFF) * w01 + (c11 shr 16 and 0xFF) * w11) shr 16)
+    val g = (((c00 shr 8 and 0xFF) * w00 + (c10 shr 8 and 0xFF) * w10 +
+        (c01 shr 8 and 0xFF) * w01 + (c11 shr 8 and 0xFF) * w11) shr 16)
+    val b = (((c00 and 0xFF) * w00 + (c10 and 0xFF) * w10 +
+        (c01 and 0xFF) * w01 + (c11 and 0xFF) * w11) shr 16)
+    return Triple(r, g, b)
 }
 
 private fun drawNativeHorizonLimb(canvas: Canvas, proj: GlobeProjection) {
@@ -547,7 +688,9 @@ private fun render3DGlobeRaster(
     subsolar: GeoPoint,
     reliefPixels: IntArray?,
     texW: Int,
-    texH: Int
+    texH: Int,
+    imagery: ImageryOverlay? = null,
+    imageryAlpha: Float = 0f
 ): Bitmap {
     val isPortrait = proj.isPortrait
     val targetW = if (isPortrait) 620 else 920
@@ -703,6 +846,21 @@ private fun render3DGlobeRaster(
                     baseR = rF.toInt().coerceIn(6, 244)
                     baseG = gF.toInt().coerceIn(22, 244)
                     baseB = bF.toInt().coerceIn(20, 244)
+                }
+
+                // Deep-zoom corridor detail: blend cached offline imagery over bundled
+                // relief along the route. Missing tiles keep bundled relief (fallback).
+                if (imagery != null && imageryAlpha > 0.001f && imagery.tiles.isNotEmpty()) {
+                    sampleImageryBilinear(imagery, lat, lon)?.let { (ir, ig, ib) ->
+                        // Same tonal grading as bundled relief for seamless tile edges.
+                        val iR = (ir * 1.08 + 10.0).coerceIn(6.0, 244.0)
+                        val iG = (ig * 1.09 + 12.0).coerceIn(22.0, 244.0)
+                        val iB = (ib * 1.08 + 12.0).coerceIn(20.0, 244.0)
+                        val a = imageryAlpha.toDouble().coerceIn(0.0, 1.0)
+                        baseR = (baseR * (1.0 - a) + iR * a).toInt().coerceIn(6, 244)
+                        baseG = (baseG * (1.0 - a) + iG * a).toInt().coerceIn(22, 244)
+                        baseB = (baseB * (1.0 - a) + iB * a).toInt().coerceIn(20, 244)
+                    }
                 }
 
                 // Direct 3D dot product with subsolar vector (no per-pixel trig!)

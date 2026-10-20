@@ -26,7 +26,9 @@ data class FlightPack(
     val mapReady: Boolean,
     val mapRegionIds: List<Long> = emptyList(),
     val mapDetailSummary: String? = "Corridor saved · zoom 0–5",
-    val sampledWeatherIds: List<String>? = emptyList()
+    val sampledWeatherIds: List<String>? = emptyList(),
+    /** Sanitized OfflinePlan flightKey identifying cached corridor raster imagery (null = bundled relief only). */
+    val mapTileKey: String? = null
 ) {
     val effectiveMapDetailSummary: String
         get() = if (mapDetailSummary.isNullOrBlank()) "Corridor saved · zoom 0–5" else mapDetailSummary

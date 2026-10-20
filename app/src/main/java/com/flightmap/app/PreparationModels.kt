@@ -26,6 +26,7 @@ data class PreparationCheckpoint(
     val mapRegionIds: List<Long> = emptyList(),
     val mapReady: Boolean = false,
     val mapDetail: String = "",
+    val mapTileKey: String? = null,
     val routeReady: Boolean = false,
     val citiesReady: Boolean = false,
     val weatherReady: Boolean = false,

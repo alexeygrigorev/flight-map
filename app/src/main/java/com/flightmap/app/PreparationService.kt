@@ -364,16 +364,115 @@ class PreparationService : Service() {
                     }
                 }
 
-                // 3. Bundled 3D satellite globe & country borders are immediately ready offline
-                val mapReady = true
-                val mapFailed = false
-                val ids = emptyList<Long>()
-                val mapDetail = "Bundled 3D satellite globe & country borders ready offline"
+                // 3. Offline map: vector regions (OpenFreeMap, offline-allowed) for the
+                // bounded route corridor + high-detail raster imagery (NASA GIBS Blue
+                // Marble, public domain) displayed on the in-flight globe at deep zoom.
+                // Both persist on disk and resume after pause/restart. mapReady is true
+                // only when both are fully downloaded and verified - never on failure.
+                var mapReady = false
+                var mapFailed = false
+                var ids: List<Long> = currentCheckpoint.mapRegionIds
+                var mapDetail = currentCheckpoint.mapDetail.ifBlank { "Preparing offline map…" }
+                var tileKey: String? = currentCheckpoint.mapTileKey
+                try {
+                    _progressFlow.value = _progressFlow.value.copy(stage = "Downloading offline map…")
+                    updateNotification(plan, "Downloading offline map…", 0, 100, true)
+
+                    // 3a. Vector regions (broad overview + corridor + airports).
+                    var vectorDetail = ""
+                    val maps = withContext(Dispatchers.Main.immediate) {
+                        OfflineMaps(applicationContext)
+                    }
+                    val vectorIds = withContext(Dispatchers.Main.immediate) {
+                        val known = maps.regionsFor(plan)
+                        val summary = maps.summary(plan)
+                        vectorDetail = "Vector " + summary.formattedSummary()
+                        _progressFlow.value = _progressFlow.value.copy(mapDetail = vectorDetail)
+                        val downloaded = maps.download(plan) { stage ->
+                            val detail = "$vectorDetail · $stage"
+                            _progressFlow.value = _progressFlow.value.copy(
+                                stage = "Downloading offline map",
+                                mapDetail = detail
+                            )
+                            updateNotification(plan, "Map: $stage", 0, 100, true)
+                        }
+                        (downloaded + known).distinct()
+                    }
+                    ids = vectorIds
+                    val vectorOk = withContext(Dispatchers.Main.immediate) {
+                        maps.verify(vectorIds)
+                    }
+                    vectorDetail = withContext(Dispatchers.Main.immediate) {
+                        runCatching {
+                            maps.detailSummary(vectorIds)
+                        }.getOrDefault(vectorDetail)
+                    }
+                    if (!vectorOk) {
+                        issues += "Vector map regions incomplete"
+                        mapFailed = true
+                    }
+
+                    // 3b. Corridor raster imagery (deep-zoom globe detail, offline).
+                    var rasterDetail = ""
+                    val tiles = CorridorTiles(applicationContext)
+                    val rasterCoverage = withContext(Dispatchers.IO) {
+                        kotlinx.coroutines.withTimeout(600_000L) {
+                            tiles.download(plan) { stage ->
+                                val detail = if (vectorDetail.isNotBlank()) {
+                                    "$vectorDetail · $stage"
+                                } else {
+                                    stage
+                                }
+                                _progressFlow.value = _progressFlow.value.copy(
+                                    stage = "Downloading offline map",
+                                    mapDetail = detail
+                                )
+                                updateNotification(plan, "Map: $stage", 0, 100, true)
+                            }
+                        }
+                    }
+                    tileKey = tiles.keyForPlan(plan)
+                    rasterDetail = tiles.coverageDetail(plan)
+                    if (!rasterCoverage.isComplete) {
+                        issues += "Corridor imagery incomplete (${rasterCoverage.present}/${rasterCoverage.total} tiles)"
+                        mapFailed = true
+                    }
+
+                    mapDetail = if (rasterDetail.isNotBlank()) "$vectorDetail · $rasterDetail" else vectorDetail
+                    mapReady = vectorOk && rasterCoverage.isComplete && !mapFailed
+                    if (!mapReady) mapFailed = true
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    issues += e.message ?: "Map download failed"
+                    mapFailed = true
+                    mapReady = false
+                    // Preserve whatever regions/tiles already persisted for resume.
+                    val discoveredIds = withContext(Dispatchers.Main.immediate) {
+                        runCatching {
+                            val maps = OfflineMaps(applicationContext)
+                            (ids + maps.regionsFor(plan)).distinct()
+                        }.getOrDefault(ids)
+                    }
+                    ids = discoveredIds
+                    tileKey = tileKey ?: runCatching {
+                        CorridorTiles(applicationContext).keyForPlan(plan)
+                    }.getOrNull()
+                    val partialDetail = runCatching {
+                        CorridorTiles(applicationContext).coverageDetail(plan)
+                    }.getOrNull()
+                    mapDetail = if (partialDetail != null && partialDetail.contains("incomplete")) {
+                        "$mapDetail · $partialDetail"
+                    } else {
+                        "Map download incomplete: ${e.message ?: "network error"}. Resume on Wi-Fi."
+                    }
+                }
 
                 currentCheckpoint = currentCheckpoint.copy(
                     mapRegionIds = ids,
                     mapReady = mapReady,
                     mapDetail = mapDetail,
+                    mapTileKey = tileKey,
                     updatedAt = Instant.now()
                 )
                 repository.saveCheckpoint(currentCheckpoint)
@@ -395,7 +494,8 @@ class PreparationService : Service() {
                     mapReady = mapReady,
                     mapRegionIds = ids,
                     mapDetailSummary = mapDetail,
-                    sampledWeatherIds = sampleCityIds
+                    sampledWeatherIds = sampleCityIds,
+                    mapTileKey = tileKey
                 )
                 repository.save(readyPack)
 
@@ -410,6 +510,7 @@ class PreparationService : Service() {
                         mapRegionIds = ids,
                         mapReady = mapReady,
                         mapDetail = mapDetail,
+                        mapTileKey = tileKey,
                         weather = weather,
                         weatherReady = weatherReady,
                         weatherDetail = weatherDetail,

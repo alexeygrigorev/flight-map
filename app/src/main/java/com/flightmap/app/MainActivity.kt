@@ -388,6 +388,23 @@ private fun PrepareScreen(vm: FlightViewModel) {
                 fontSize = 12.sp
             )
         }
+        if (vm.busy && vm.mapDetail.isNotBlank()) {
+            Text(
+                vm.mapDetail,
+                Modifier.padding(top = 4.dp),
+                color = Muted,
+                fontSize = 11.sp,
+                lineHeight = 15.sp
+            )
+        }
+        if (vm.busy && vm.weatherDetail.isNotBlank()) {
+            Text(
+                vm.weatherDetail,
+                Modifier.padding(top = 2.dp),
+                color = Muted,
+                fontSize = 11.sp
+            )
+        }
         vm.error?.let {
             Text(it, color = Amber, fontSize = 12.sp, lineHeight = 17.sp, modifier = Modifier.padding(top = 10.dp))
         }
@@ -478,14 +495,23 @@ private fun PrepareScreen(vm: FlightViewModel) {
                                         fontWeight = FontWeight.Medium
                                     )
                                     Spacer(Modifier.width(8.dp))
-                                    Text(
-                                        depDateStr,
-                                        color = Muted,
-                                        fontSize = 11.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f)
-                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            depDateStr,
+                                            color = Muted,
+                                            fontSize = 11.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            if (flightPack.mapReady) flightPack.effectiveMapDetailSummary
+                                            else "Map incomplete — resume preparation",
+                                            color = if (flightPack.mapReady) Muted else Amber,
+                                            fontSize = 10.sp,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                     TextButton(
                                         onClick = {
                                             optionsOpen = false
@@ -676,7 +702,7 @@ private fun PrepareScreen(vm: FlightViewModel) {
             title = { Text("Made for the window seat") },
             text = {
                 Text(
-                    "Flight Map renders an airline IFE 3D satellite globe with filed ATS route corridors, curated overflown cities with Wikidata-style cards, mountain peaks, solar day/night terminator, and offline weather.\n\nData: NASA Blue Marble (public domain), Natural Earth (public domain), OurAirports, GeoNames, Open-Meteo.",
+                    "Flight Map renders an airline IFE 3D satellite globe with filed ATS route corridors, curated overflown cities with Wikidata-style cards, mountain peaks, solar day/night terminator, and offline weather.\n\nData: NASA Blue Marble (public domain), Natural Earth (public domain), OurAirports, GeoNames, Open-Meteo.\n\nOffline maps: route-corridor vector regions via OpenFreeMap (© OpenStreetMap contributors, OpenMapTiles; offline use explicitly permitted) plus corridor imagery via NASA GIBS Blue Marble Shaded Relief (public domain). The globe screen shows full attribution.",
                     fontSize = 13.sp
                 )
             },

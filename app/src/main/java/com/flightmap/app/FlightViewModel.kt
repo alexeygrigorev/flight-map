@@ -45,8 +45,14 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             runCatching {
                 repository.loadData()
+                val tiles = CorridorTiles(getApplication<Application>())
                 val loadedPacks = repository.readPacks().map { p ->
-                    p.copy(mapReady = p.mapReady && (p.mapRegionIds.isEmpty() || maps.verify(p.mapRegionIds)))
+                    val vectorOk = p.mapRegionIds.isEmpty() || maps.verify(p.mapRegionIds)
+                    val rasterOk = p.mapTileKey == null || runCatching {
+                        val (_, selection, coverage) = withContext(Dispatchers.IO) { tiles.coverage(p.plan) }
+                        coverage.total == selection.tileCount && coverage.isComplete
+                    }.getOrDefault(false)
+                    p.copy(mapReady = p.mapReady && vectorOk && rasterOk)
                 }
                 packs = loadedPacks
                 pack = loadedPacks.firstOrNull()
@@ -57,6 +63,12 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
                 val inProgressIds = (pending?.mapRegionIds.orEmpty() + checkpointDiscovered).distinct()
                 val allReferenced = (loadedPacks.flatMap { it.mapRegionIds } + inProgressIds).distinct()
                 maps.discardUnreferenced(allReferenced)
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        val keepPlans = loadedPacks.map { it.plan } + listOfNotNull(pending?.plan)
+                        tiles.pruneExceptPlans(keepPlans)
+                    }
+                }
 
                 if (checkpoint != null && checkpoint.status != PreparationStatus.COMPLETED) {
                     pendingPreparation = true
@@ -232,6 +244,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
 
     fun deletePack(target: FlightPack) {
         viewModelScope.launch {
+            runCatching { CorridorTiles(getApplication<Application>()).deletePlan(target.plan) }
             repository.deletePack(target)
             val remainingPacks = repository.readPacks()
             packs = remainingPacks
