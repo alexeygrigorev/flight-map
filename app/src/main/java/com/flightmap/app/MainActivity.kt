@@ -1028,9 +1028,6 @@ private fun FlightScreen(vm: FlightViewModel) {
                 vm.returnToCurrentPosition()
                 isPlaying = wasLive && vm.livePlay != null
             },
-            onInspectCity = { city ->
-                cameraState.selectedFeature = SelectedGlobeFeature.CityFeature(city)
-            },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
@@ -1042,7 +1039,10 @@ private fun FlightScreen(vm: FlightViewModel) {
 
 /**
  * Single discreet, low-profile translucent bottom panel that unifies:
- * - Concise structured Wikidata-style card when a city (or peak/pin) on the map is tapped (AC #16)
+ * - Concise structured Wikidata-style card shown ONLY when the user explicitly taps a
+ *   city (or peak/pin) marker on the map; dismissible via X, map background tap, or
+ *   Route reset (AC #16). Never auto-opened: no nearest-city card on initial load,
+ *   timeline scrubbing, Play/Sim, or Plane-follow.
  * - Takeoff Play clock, 1×/60× simulation toggle, scrubber, and always-available "Return to now" (AC #13, #15)
  * - Current overflown place, local clock, day/night, weather & camera controls
  */
@@ -1067,7 +1067,6 @@ private fun DiscreetIfePanel(
     onToggleSimSpeed: () -> Unit,
     onScrub: (Float) -> Unit,
     onResetTime: () -> Unit,
-    onInspectCity: (City) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val timeFormatter = remember { DateTimeFormatter.ofPattern("HH:mm") }
@@ -1088,7 +1087,7 @@ private fun DiscreetIfePanel(
         modifier = modifier
     ) {
         Column(Modifier.padding(horizontal = 14.dp, vertical = 7.dp)) {
-            // 1. Short structured Wikidata-style card when user taps a city on the map (or taps city in dock)
+            // 1. Short structured Wikidata-style card shown ONLY on explicit map-marker tap (no auto-open)
             cameraState.selectedFeature?.let { feature ->
                 WikidataFeatureCard(
                     feature = feature,
@@ -1210,12 +1209,10 @@ private fun DiscreetIfePanel(
             // 3. Discreet status & camera controls bar (1-line in landscape, 2-line in portrait so city name never truncates)
             @Composable
             fun LocationSummaryRow(rowModifier: Modifier) {
+                // Tap-only city cards: this status line is display-only and never opens a card.
+                // City detail appears only when the user explicitly taps a marker on the map.
                 Row(
-                    rowModifier
-                        .clickable {
-                            val target = nearest ?: corridorCities.firstOrNull()
-                            if (target != null) onInspectCity(target)
-                        },
+                    rowModifier,
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
@@ -1257,36 +1254,6 @@ private fun DiscreetIfePanel(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
-                    Surface(
-                        onClick = {
-                            val currentCity = (cameraState.selectedFeature as? SelectedGlobeFeature.CityFeature)?.city
-                            if (currentCity != null && cameraState.selectedFeature != null) {
-                                cameraState.selectedFeature = null
-                            } else {
-                                val target = nearest ?: corridorCities.firstOrNull()
-                                if (target != null) onInspectCity(target)
-                            }
-                        },
-                        color = if (cameraState.selectedFeature != null) IfeIndigoBright else Color(0xFF132038),
-                        shape = RoundedCornerShape(14.dp),
-                        border = BorderStroke(1.dp, Mint.copy(alpha = 0.35f)),
-                        modifier = Modifier
-                            .height(28.dp)
-                            .semantics { contentDescription = "City card" }
-                    ) {
-                        Row(
-                            Modifier.padding(horizontal = 9.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                "City card",
-                                color = Mint,
-                                fontSize = 10.5.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                    }
-
                     Surface(
                         onClick = onTogglePreview,
                         color = if (previewOpen) IfeIndigoBright else Color(0xFF132038),

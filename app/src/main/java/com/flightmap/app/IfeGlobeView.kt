@@ -109,13 +109,8 @@ class GlobeCameraState(
             cameraLat = progress.point.lat.coerceIn(-78.0, 78.0)
             cameraLon = progress.point.lon
             if (zoom < 1.35) zoom = 1.65
-            val nearestHub = candidateCities
-                .filter { it.population >= 45_000 && GreatCircle.distanceKm(it.point, progress.point) <= 320.0 }
-                .minByOrNull { GreatCircle.distanceKm(it.point, progress.point) }
-                ?: candidateCities.minByOrNull { GreatCircle.distanceKm(it.point, progress.point) }
-            if (nearestHub != null) {
-                selectedFeature = SelectedGlobeFeature.CityFeature(nearestHub)
-            }
+            // Tap-only city cards: following the plane never auto-opens a city card.
+            // City detail appears only when the user explicitly taps a marker on the map.
         }
     }
 
