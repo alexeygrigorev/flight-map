@@ -753,7 +753,7 @@ private fun PrepareScreen(vm: FlightViewModel) {
             title = { Text("Made for the window seat") },
             text = {
                 Text(
-                    "Flight Map renders an airline IFE 3D satellite globe with filed ATS route corridors, curated overflown cities with Wikidata-style cards, mountain peaks, solar day/night terminator, and offline weather.\n\nData: NASA Blue Marble (public domain), Natural Earth (public domain), OurAirports, GeoNames, Open-Meteo.\n\nOffline maps: route-corridor vector regions cached via OpenFreeMap (© OpenStreetMap contributors, OpenMapTiles; offline use explicitly permitted) for retention, plus corridor imagery via NASA GIBS Blue Marble Shaded Relief (public domain) which is the detail rendered on the 3D globe at deep zoom. The globe screen shows full attribution.",
+                    "Flight Map renders an airline IFE 3D satellite globe with explicitly estimated route corridors and validated historical tracks when available, curated overflown cities with Wikidata-style cards, mountain peaks, solar day/night terminator, and offline weather.\n\nData: NASA Blue Marble (public domain), Natural Earth (public domain), OurAirports, GeoNames, Open-Meteo.\n\nOffline maps: route-corridor vector regions cached via OpenFreeMap (© OpenStreetMap contributors, OpenMapTiles; offline use explicitly permitted) for retention, plus corridor imagery via NASA GIBS Blue Marble Shaded Relief (public domain) which is the detail rendered on the 3D globe at deep zoom. The globe screen shows full attribution.",
                     fontSize = 13.sp
                 )
             },
