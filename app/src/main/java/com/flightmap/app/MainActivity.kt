@@ -1572,6 +1572,11 @@ private fun FlightControlsDialog(vm: FlightViewModel, onDismiss: () -> Unit, onS
             plan.historicalTrack?.let { track ->
                 Text("Historical source: ${track.source} · ${track.observedDeparture.atZone(ZoneOffset.UTC).toLocalDate()}", color = Muted, fontSize = 11.sp)
                 track.coverageNote?.let { Text(it, color = Amber, fontSize = 11.sp) }
+                val recordedAltitudes = track.points.mapNotNull { it.altitudeMeters?.takeIf(Double::isFinite) }
+                if (recordedAltitudes.isNotEmpty()) Text(
+                    "Recorded historical altitude range: ${recordedAltitudes.min().roundToInt()}–${recordedAltitudes.max().roundToInt()} m · not current altitude",
+                    color = Muted, fontSize = 11.sp)
+
                 TextButton(onClick = {
                     context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(track.sourceUrl)))
                 }) { Text("Historical source details") }
