@@ -28,6 +28,19 @@ object FlightPresentation {
         return "ETA ${eta.atZone(ZoneId.of(plan.destination.timezone)).format(DateTimeFormatter.ofPattern("HH:mm"))} destination time"
     }
 
+    fun durationSource(plan: FlightPlan): String = when {
+        plan.estimatedAirborneMinutes != null -> "User estimate: ${plan.estimatedAirborneMinutes} min airborne"
+        plan.effectiveHistoricalTrack != null -> "Historical replay duration: ${Duration.between(com.flightmap.core.FlightTiming.effectiveDeparture(plan), com.flightmap.core.FlightTiming.estimatedArrival(plan)).toMinutes()} min"
+        else -> "Scheduled block-time fallback: ${Duration.between(plan.departure, plan.arrival).toMinutes()} min · includes taxi time"
+    }
+
+    fun parseAirborneMinutes(value: String): Int? {
+        if (value.isBlank()) return null
+        val minutes = value.trim().toIntOrNull()
+        require(minutes != null && minutes in 1..1440) { "Enter 1–1440 minutes, or leave empty for the default." }
+        return minutes
+    }
+
     /** Full local date and time avoids silently choosing the wrong day around midnight. */
     fun parseTakeoff(value: String, timezone: String): Instant {
         val local = LocalDateTime.parse(value.trim())

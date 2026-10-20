@@ -1513,6 +1513,8 @@ private fun FlightControlsDialog(vm: FlightViewModel, onDismiss: () -> Unit, onS
     var takeoff by remember(plan.actualTakeoff, plan.departure) {
         mutableStateOf((plan.actualTakeoff ?: plan.departure).atZone(zone).toLocalDateTime().withSecond(0).withNano(0).toString())
     }
+    var durationText by remember(plan.estimatedAirborneMinutes) { mutableStateOf(plan.estimatedAirborneMinutes?.toString().orEmpty()) }
+    var durationError by remember { mutableStateOf<String?>(null) }
     var inputError by remember { mutableStateOf<String?>(null) }
     var permissionDenied by remember { mutableStateOf(false) }
     val notifications = context.getSystemService(android.app.NotificationManager::class.java)
@@ -1537,6 +1539,15 @@ private fun FlightControlsDialog(vm: FlightViewModel, onDismiss: () -> Unit, onS
             Button(enabled = !vm.timingBusy && plan.landedAt == null, onClick = { vm.markLanded() }) {
                 Text(if (plan.landedAt != null) "Landed ✓" else "Mark landed now")
             }
+            OutlinedTextField(durationText, { durationText = it; durationError = null },
+                label = { Text("Estimated airborne duration · minutes") },
+                supportingText = { Text(durationError ?: FlightPresentation.durationSource(plan)) },
+                isError = durationError != null, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth())
+            TextButton(enabled = !vm.timingBusy, onClick = {
+                runCatching { FlightPresentation.parseAirborneMinutes(durationText) }
+                    .onSuccess { vm.setEstimatedAirborneMinutes(it) }.onFailure { durationError = it.message }
+            }) { Text("Save duration estimate") }
             HorizontalDivider()
             Text("Ongoing flight card", fontWeight = FontWeight.Bold)
             Text("Route, plane progress and estimated arrival continue offline when this app is in the background.", fontSize = 12.sp, color = Muted)

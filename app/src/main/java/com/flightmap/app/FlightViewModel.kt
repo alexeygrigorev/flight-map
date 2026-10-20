@@ -397,7 +397,7 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
         screen = "flight"
     }
 
-    /** Press Play at takeoff: anchor wall-now to departure and advance 1:1 (or at simulationSpeed). */
+    /** Simulation: anchor wall-now to the preview departure, independently of saved real timing. */
     fun startLivePlay(speedMultiplier: Int = simulationSpeed) {
         val plan = simulationPlan() ?: return
         simulationSpeed = speedMultiplier.coerceIn(1, 600)
@@ -501,6 +501,10 @@ class FlightViewModel(application: Application) : AndroidViewModel(application) 
     fun setActualTakeoff(instant: Instant) = updateTiming { it.copy(actualTakeoff = instant, landedAt = null) }
     fun delayTakeoff() = updateTiming { it.copy(actualTakeoff = (it.actualTakeoff ?: it.departure).plusSeconds(1800), landedAt = null) }
     fun markLanded() = updateTiming { it.copy(landedAt = Instant.now()) }
+    fun setEstimatedAirborneMinutes(minutes: Int?) = updateTiming {
+        require(minutes == null || minutes in 1..1440) { "Duration must be 1–1440 minutes" }
+        it.copy(estimatedAirborneMinutes = minutes)
+    }
 
     private fun updateTiming(transform: (FlightPlan) -> FlightPlan) {
         val target = pack?.plan ?: return

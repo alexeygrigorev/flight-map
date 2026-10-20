@@ -48,6 +48,20 @@ class FlightPresentationTest {
         assertTrue(FlightPresentation.altitude(progress.copy(altitudeMeters = 9800.0)).startsWith("Estimated altitude "))
     }
 
+    @Test fun explicitAirborneEstimateOverridesScheduledBlockDuration() {
+        val corrected = plan.copy(actualTakeoff = departure.plusSeconds(1800), estimatedAirborneMinutes = 90)
+        val now = departure.plusSeconds(3600)
+        val progress = FlightTiming.progress(corrected, now)
+        assertEquals("ETA 12:00 destination time", FlightPresentation.arrival(corrected, progress, now))
+        assertEquals("User estimate: 90 min airborne", FlightPresentation.durationSource(corrected))
+        assertTrue(FlightPresentation.durationSource(plan).contains("includes taxi time"))
+        assertNull(FlightPresentation.parseAirborneMinutes(""))
+        assertEquals(90, FlightPresentation.parseAirborneMinutes("90"))
+        for (input in listOf("0", "1441", "1.5", "unknown")) {
+            assertThrows(IllegalArgumentException::class.java) { FlightPresentation.parseAirborneMinutes(input) }
+        }
+    }
+
     @Test fun timingEditsKeepPackIdentityAndHistoricalMetadata() {
         val updated = plan.copy(actualTakeoff = departure.plusSeconds(1800), landedAt = departure.plusSeconds(7800))
         assertTrue(isSameFlight(plan, updated))
