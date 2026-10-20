@@ -12,6 +12,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateRotation
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -80,14 +81,16 @@ class GlobeCameraState(
     var zoom by mutableDoubleStateOf(1.0)
     var followPlane by mutableStateOf(false)
     var headingUp by mutableStateOf(false)
+    var rotationDeg by mutableDoubleStateOf(0.0)
+    var tiltDeg by mutableDoubleStateOf(0.0)
     var selectedFeature by mutableStateOf<SelectedGlobeFeature?>(null)
 
     val isDefaultOverview: Boolean
-        get() = !followPlane && !headingUp && abs(zoom - 1.0) < 0.08 &&
-            hypot(cameraLat - defaultCenter.lat, cameraLon - defaultCenter.lon) < 3.0
+        get() = !followPlane && !headingUp && abs(rotationDeg) < 0.5 && tiltDeg < 0.5 && abs(zoom - 1.0) < 0.001 &&
+            hypot(cameraLat - defaultCenter.lat, GlobeCameraTransform.wrapDegrees(cameraLon - defaultCenter.lon)) < 0.001
 
     fun zoomIn() {
-        zoom = (zoom * 1.55).coerceAtMost(12.0)
+        zoom = (zoom * 1.55).coerceAtMost(GlobeProjection.MAX_ZOOM)
     }
 
     fun zoomOut() {
@@ -97,6 +100,8 @@ class GlobeCameraState(
     fun resetToRouteOverview() {
         followPlane = false
         headingUp = false
+        rotationDeg = 0.0
+        tiltDeg = 0.0
         selectedFeature = null
         zoom = 1.0
         cameraLat = defaultCenter.lat
@@ -173,7 +178,7 @@ fun IfeGlobeView(
         }
     }
 
-    val effectiveRotation = 0.0
+    val effectiveRotation = cameraState.rotationDeg
 
     val camLatBucket = (cameraState.cameraLat * 2.0).roundToInt()
     val camLonBucket = (cameraState.cameraLon * 2.0).roundToInt()
@@ -252,7 +257,8 @@ fun IfeGlobeView(
         cameraState.cameraLat,
         cameraState.cameraLon,
         cameraState.zoom,
-        effectiveRotation
+        effectiveRotation,
+        cameraState.tiltDeg
     ) {
         GlobeProjection(
             width = viewportSize.width.toFloat().coerceAtLeast(1f),
@@ -260,7 +266,8 @@ fun IfeGlobeView(
             centerLat = cameraState.cameraLat,
             centerLon = cameraState.cameraLon,
             zoom = cameraState.zoom,
-            headingRotationDeg = effectiveRotation
+            headingRotationDeg = effectiveRotation,
+            tiltDeg = cameraState.tiltDeg
         )
     }
 
@@ -329,6 +336,8 @@ fun IfeGlobeView(
                     var lastPos = downPos
                     var totalMovedPx = 0f
                     var hadMultiTouch = false
+                    var previousPointerCount = 1
+                    var dragging = false
 
                     do {
                         val event = awaitPointerEvent()
@@ -336,62 +345,51 @@ fun IfeGlobeView(
                         if (pressedCount >= 2) {
                             hadMultiTouch = true
                         }
-                        val zoomChange = event.calculateZoom()
-                        val panChange = event.calculatePan()
-                        val centroid = event.calculateCentroid(useCurrent = false)
-
-                        val isZooming = abs(zoomChange - 1f) > 0.002f
-                        val isPanning = panChange.getDistance() > 0.4f
-
-                        if (isZooming || isPanning) {
-                            totalMovedPx += panChange.getDistance() + abs(zoomChange - 1f) * 320f
-                            val oldZoom = cameraState.zoom
-                            val newZoom = (oldZoom * zoomChange.toDouble()).coerceIn(0.75, 12.0)
-
-                            if (totalMovedPx > 6f || hadMultiTouch) {
+                        // Rebase whenever a finger enters/leaves: never apply a delta across
+                        // different pointer sets, and never turn the end of a pinch into a tap.
+                        if (pressedCount == previousPointerCount && pressedCount > 0) {
+                            val zoomChange = event.calculateZoom()
+                            val rotationChange = event.calculateRotation()
+                            val panChange = event.calculatePan()
+                            val centroid = event.calculateCentroid(useCurrent = false)
+                            totalMovedPx += panChange.getDistance() + abs(zoomChange - 1f) * 320f + abs(rotationChange) * 3f
+                            if (totalMovedPx > viewConfiguration.touchSlop) dragging = true
+                            if (dragging && centroid != Offset.Unspecified) {
                                 cameraState.followPlane = false
-                                val proj = currentProjection
-                                val w = maxOf(viewportSize.width, 1)
-                                val h = maxOf(viewportSize.height, 1)
-                                val degPerPx = (78.0 / maxOf(w, h).toDouble()) / newZoom
-                                val cosRot = proj.cosRot
-                                val sinRot = proj.sinRot
-
-                                // Include focal-point drift during 2-finger pinch so pinch zooms toward the fingers
-                                val pinchShiftX = if (pressedCount >= 2 && centroid != Offset.Unspecified) {
-                                    (centroid.x - proj.sphereCenterX) * (1.0 - oldZoom / newZoom) * 0.45
-                                } else {
-                                    0.0
+                                cameraState.headingUp = false
+                                // Build from current state rather than the last rendered frame.
+                                fun cameraProjection() = GlobeProjection(
+                                    viewportSize.width.toFloat().coerceAtLeast(1f),
+                                    viewportSize.height.toFloat().coerceAtLeast(1f),
+                                    cameraState.cameraLat, cameraState.cameraLon, cameraState.zoom,
+                                    cameraState.rotationDeg, cameraState.tiltDeg
+                                )
+                                val before = cameraProjection()
+                                val anchor = before.unproject(centroid.x, centroid.y)
+                                cameraState.zoom = (cameraState.zoom * zoomChange).coerceIn(0.75, GlobeProjection.MAX_ZOOM)
+                                cameraState.rotationDeg = GlobeCameraTransform.wrapDegrees(cameraState.rotationDeg - rotationChange)
+                                // Parallel two-finger vertical drag tilts; single-finger drag pans.
+                                if (pressedCount >= 2) {
+                                    cameraState.tiltDeg = (cameraState.tiltDeg - panChange.y * 0.16).coerceIn(0.0, GlobeProjection.MAX_TILT_DEG)
                                 }
-                                val pinchShiftY = if (pressedCount >= 2 && centroid != Offset.Unspecified) {
-                                    (centroid.y - proj.focusScreenY) * (1.0 - oldZoom / newZoom) * 0.45
-                                } else {
-                                    0.0
+                                if (anchor != null) {
+                                    val center = GlobeCameraTransform.anchoredCenter(
+                                        cameraProjection(), GeoPoint(anchor.first, anchor.second),
+                                        centroid.x + panChange.x,
+                                        centroid.y + if (pressedCount >= 2) 0f else panChange.y
+                                    )
+                                    cameraState.cameraLat = center.lat
+                                    cameraState.cameraLon = center.lon
                                 }
-
-                                val dx = panChange.x.toDouble() - pinchShiftX
-                                val dy = panChange.y.toDouble() - pinchShiftY
-
-                                val dEastPx = dx * cosRot - dy * sinRot
-                                val dNorthPx = dx * sinRot + dy * cosRot
-                                val cosLat = cos(Math.toRadians(cameraState.cameraLat)).coerceAtLeast(0.22)
-
-                                cameraState.zoom = newZoom
-                                cameraState.cameraLon = (((cameraState.cameraLon - (dEastPx * degPerPx) / cosLat) + 180.0) % 360.0 + 360.0) % 360.0 - 180.0
-                                cameraState.cameraLat = (cameraState.cameraLat + dNorthPx * degPerPx * 0.85).coerceIn(-78.0, 78.0)
-
-                                event.changes.forEach { change ->
-                                    if (change.positionChanged()) {
-                                        change.consume()
-                                    }
-                                }
+                                event.changes.forEach { if (it.positionChanged()) it.consume() }
                             }
                         }
+                        previousPointerCount = pressedCount
                         event.changes.firstOrNull()?.let { lastPos = it.position }
                     } while (event.changes.any { it.pressed })
 
                     val upTimeMs = System.currentTimeMillis()
-                    if (!hadMultiTouch && totalMovedPx < 22f && (upTimeMs - downTimeMs) < 450L) {
+                    if (!hadMultiTouch && !dragging && totalMovedPx < 22f && (upTimeMs - downTimeMs) < 450L) {
                         val proj = currentProjection
                         if (upTimeMs - lastSingleTapTimeMs < 320L && (lastPos - lastSingleTapPos).getDistance() < 64f) {
                             // Double-tap zooms smoothly into the tapped geographic point
@@ -400,7 +398,7 @@ fun IfeGlobeView(
                                 cameraState.cameraLat = (cameraState.cameraLat * 0.35 + tapLat * 0.65).coerceIn(-78.0, 78.0)
                                 cameraState.cameraLon = tapLon
                             }
-                            cameraState.zoom = (cameraState.zoom * 1.75).coerceAtMost(10.0)
+                            cameraState.zoom = (cameraState.zoom * 1.75).coerceAtMost(GlobeProjection.MAX_ZOOM)
                             lastSingleTapTimeMs = 0L
                         } else {
                             lastSingleTapTimeMs = upTimeMs
@@ -506,8 +504,8 @@ private fun drawNativeHorizonLimb(canvas: Canvas, proj: GlobeProjection) {
         style = Paint.Style.STROKE
         strokeWidth = 2.0f
     }
-    canvas.drawCircle(proj.sphereCenterX, proj.sphereCenterY, proj.radius + 1.5f, outerGlowPaint)
-    canvas.drawCircle(proj.sphereCenterX, proj.sphereCenterY, proj.radius, innerRimPaint)
+    canvas.drawCircle(proj.sphereCenterX, proj.sphereCenterY, proj.silhouetteRadius + 1.5f, outerGlowPaint)
+    canvas.drawCircle(proj.sphereCenterX, proj.sphereCenterY, proj.silhouetteRadius, innerRimPaint)
 }
 
 /**
@@ -540,36 +538,6 @@ private fun sampleMicroRelief(lat: Double, lon: Double): Double {
 }
 
 /**
- * Fast polynomial approximation of asin(x) in degrees, max error < 0.004°.
- */
-private fun fastAsinDeg(x: Double): Double {
-    val neg = x < 0.0
-    val ax = if (neg) -x else x
-    val clamped = if (ax > 1.0) 1.0 else ax
-    val poly = ((-0.0187293 * clamped + 0.0742610) * clamped - 0.2121144) * clamped + 1.5707288
-    val rad = 1.5707963267948966 - sqrt(1.0 - clamped) * poly
-    val deg = rad * 57.29577951308232
-    return if (neg) -deg else deg
-}
-
-/**
- * Fast atan2(y, x) in degrees, max error < 0.005°.
- */
-private fun fastAtan2Deg(y: Double, x: Double): Double {
-    if (x == 0.0 && y == 0.0) return 0.0
-    val ay = abs(y)
-    val ax = abs(x)
-    val swap = ay > ax
-    val z = if (swap) ax / ay else ay / ax
-    val z2 = z * z
-    val a = ((0.0776509570923569 * z2 - 0.287434475393028) * z2 + 0.995181681698119) * z
-    var rad = if (swap) (1.5707963267948966 - a) else a
-    if (x < 0.0) rad = 3.141592653589793 - rad
-    if (y < 0.0) rad = -rad
-    return rad * 57.29577951308232
-}
-
-/**
  * Raycasts the 3D globe into an offscreen bitmap buffer using the EXACT screen [proj]
  * (eliminating any aspect-ratio or horizonTopY mismatch), bilinear texture filtering,
  * smooth anti-aliased horizon blending, and parallel multi-core row execution.
@@ -588,7 +556,7 @@ private fun render3DGlobeRaster(
     val outPixels = IntArray(targetW * targetH)
     val cx = proj.sphereCenterX.toDouble()
     val cy = proj.sphereCenterY.toDouble()
-    val r = proj.radius.toDouble()
+    val r = proj.silhouetteRadius.toDouble()
     val invR = 1.0 / r
     val scaleX = proj.width.toDouble() / targetW.toDouble()
     val scaleY = proj.height.toDouble() / targetH.toDouble()
@@ -619,13 +587,15 @@ private fun render3DGlobeRaster(
     java.util.stream.IntStream.range(0, targetH).parallel().forEach { py ->
         val rowOffset = py * targetW
         val sy = (py + 0.5) * scaleY
-        val y2 = (cy - sy) * invR
-        val y2Sq = y2 * y2
+        val screenY = cy - sy
+        val normalizedY = screenY * invR
+        val y2Sq = normalizedY * normalizedY
 
         for (px in 0 until targetW) {
             val sx = (px + 0.5) * scaleX
-            val x2 = (sx - cx) * invR
-            val rSq = x2 * x2 + y2Sq
+            val screenX = sx - cx
+            val normalizedX = screenX * invR
+            val rSq = normalizedX * normalizedX + y2Sq
 
             if (rSq >= 1.0) {
                 val distFromLimb = sqrt(rSq) - 1.0
@@ -648,7 +618,18 @@ private fun render3DGlobeRaster(
                 }
                 outPixels[rowOffset + px] = color
             } else {
-                val z2 = sqrt(1.0 - rSq)
+                // Exact same pinhole ray/sphere intersection as GlobeProjection.unproject.
+                val f = proj.focalPx
+                val d = proj.cameraDistance
+                val invLen = 1.0 / sqrt(screenX * screenX + screenY * screenY + f * f)
+                val dx = screenX * invLen
+                val dy = screenY * invLen
+                val dz = -f * invLen
+                val b = d * dz
+                val t = -b - sqrt((b * b - (d * d - 1.0)).coerceAtLeast(0.0))
+                val x2 = t * dx
+                val y2 = t * dy
+                val z2 = d + t * dz
 
                 // Undo X-axis pitch rotation
                 val y1 = y2 * cosPitch - z2 * sinPitch
@@ -661,8 +642,8 @@ private fun render3DGlobeRaster(
                 val sinPhi = (z1 * sinLat0 + yNorth * cosLat0).coerceIn(-1.0, 1.0)
                 val cosPhiCosDLon = z1 * cosLat0 - yNorth * sinLat0
 
-                val lat = fastAsinDeg(sinPhi)
-                var lon = centerLon + fastAtan2Deg(xEast, cosPhiCosDLon)
+                val lat = Math.toDegrees(asin(sinPhi))
+                var lon = centerLon + Math.toDegrees(atan2(xEast, cosPhiCosDLon))
                 if (lon > 180.0) lon -= 360.0 else if (lon < -180.0) lon += 360.0
 
                 var baseR = 12
@@ -835,7 +816,7 @@ private fun drawGraticule(canvas: Canvas, proj: GlobeProjection) {
     }
     canvas.save()
     val clipDisc = Path().apply {
-        addCircle(proj.sphereCenterX, proj.sphereCenterY, proj.radius - 1.5f, Path.Direction.CW)
+        addCircle(proj.sphereCenterX, proj.sphereCenterY, proj.silhouetteRadius - 1.5f, Path.Direction.CW)
     }
     canvas.clipPath(clipDisc)
 
@@ -931,7 +912,7 @@ private fun drawCountryBorders(
 
     canvas.save()
     val clipDisc = Path().apply {
-        addCircle(proj.sphereCenterX, proj.sphereCenterY, proj.radius - 1.5f, Path.Direction.CW)
+        addCircle(proj.sphereCenterX, proj.sphereCenterY, proj.silhouetteRadius - 1.5f, Path.Direction.CW)
     }
     canvas.clipPath(clipDisc)
 
@@ -942,8 +923,12 @@ private fun drawCountryBorders(
     val camX = camCosP * cos(camLam)
     val camY = camCosP * sin(camLam)
     val camZ = sin(camPhi)
-    val halfDiagPx = hypot(proj.width.toDouble(), proj.height.toDouble()) * 0.55
-    val fovAngRad = asin((halfDiagPx / proj.radius.toDouble()).coerceIn(0.05, 1.0)) + 0.25
+    val viewportPoints = listOf(0f to 0f, proj.width to 0f, 0f to proj.height, proj.width to proj.height,
+        proj.width / 2 to 0f, proj.width / 2 to proj.height)
+    val fovAngRad = viewportPoints.maxOf { (x, y) ->
+        proj.unproject(x, y)?.let { GreatCircle.distanceKm(GeoPoint(proj.centerLat, proj.centerLon), GeoPoint(it.first, it.second)) / 6371.0 }
+            ?: Math.PI
+    } + 0.15
 
     val path = Path()
     val maxSegmentPx = proj.radius * 0.14f

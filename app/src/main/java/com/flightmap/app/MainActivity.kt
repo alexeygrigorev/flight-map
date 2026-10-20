@@ -1284,7 +1284,7 @@ private fun DiscreetIfePanel(
                             modifier = Modifier.height(28.dp)
                         ) {
                             Box(Modifier.padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
-                                Text("Route", color = Color.White, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold)
+                                Text("Reset", color = Color.White, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold)
                             }
                         }
                     }
@@ -1294,6 +1294,15 @@ private fun DiscreetIfePanel(
                         description = "Plane",
                         active = cameraState.followPlane,
                         onClick = { cameraState.toggleFollowPlane(progress, pack.cities) }
+                    )
+
+                    DiscreetTextButton(
+                        label = "N ↑",
+                        description = "North up; reset rotation and tilt",
+                        onClick = {
+                            cameraState.rotationDeg = 0.0
+                            cameraState.tiltDeg = 0.0
+                        }
                     )
 
                     DiscreetTextButton(
