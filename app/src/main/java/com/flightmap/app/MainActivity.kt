@@ -1472,31 +1472,49 @@ private fun RouteFlightHeader(
     onBack: () -> Unit, onControls: () -> Unit, onOrientation: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val status = FlightPresentation.status(progress, plan.landedAt != null)
+    val altitude = FlightPresentation.altitude(progress)
+    val arrival = FlightPresentation.arrival(plan, progress, time).replace(" destination time", "")
     Surface(color = Ink.copy(alpha = .94f), modifier = modifier.fillMaxWidth().statusBarsPadding()) {
-        Row(Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.padding(horizontal = 8.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Saved flights", tint = Cream) }
-            Column(Modifier.weight(1f).clickable(onClick = onControls).padding(horizontal = 4.dp)) {
+            Column(Modifier.weight(1f).clickable(onClick = onControls).padding(horizontal = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("${plan.number} · ${if (simulation) "SIMULATION" else "ESTIMATED"}", color = if (simulation) Amber else Mint,
-                        fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                    Icon(Icons.Outlined.Tune, "Flight controls", tint = Mint, modifier = Modifier.size(20.dp))
+                        fontSize = 11.sp, lineHeight = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Icon(Icons.Outlined.Tune, "Flight controls", tint = Mint, modifier = Modifier.size(18.dp))
                 }
-                Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically,
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Column(Modifier.widthIn(max = 112.dp).weight(1f)) {
-                        Text(plan.origin.iata, color = Cream, fontSize = 19.sp, fontWeight = FontWeight.Bold)
-                        Text(originName, color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Column(Modifier.weight(1f)) {
+                        Text(if (isLandscape) "${plan.origin.iata} · $originName" else plan.origin.iata,
+                            color = Cream, fontSize = if (isLandscape) 14.sp else 18.sp,
+                            lineHeight = if (isLandscape) 18.sp else 22.sp, fontWeight = FontWeight.Bold,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (!isLandscape) Text(originName, color = Muted, fontSize = 11.sp, lineHeight = 14.sp,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     IfeHeaderProgressBar(progress.fraction.toFloat(), Modifier.weight(1.4f).height(24.dp))
-                    Column(Modifier.widthIn(max = 112.dp).weight(1f), horizontalAlignment = Alignment.End) {
-                        Text(plan.destination.iata, color = Cream, fontSize = 19.sp, fontWeight = FontWeight.Bold)
-                        Text(destinationName, color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Column(Modifier.weight(1f), horizontalAlignment = Alignment.End) {
+                        Text(if (isLandscape) "${plan.destination.iata} · $destinationName" else plan.destination.iata,
+                            color = Cream, fontSize = if (isLandscape) 14.sp else 18.sp,
+                            lineHeight = if (isLandscape) 18.sp else 22.sp, fontWeight = FontWeight.Bold,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (!isLandscape) Text(destinationName, color = Muted, fontSize = 11.sp, lineHeight = 14.sp,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
-                Text(FlightPresentation.status(progress, plan.landedAt != null), color = if (progress.phase == "ARRIVED") Mint else Cream,
-                    fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                Text("${FlightPresentation.altitude(progress)} · ${(progress.fraction * 100).roundToInt()}%", color = Muted, fontSize = 11.sp)
-                Text(FlightPresentation.arrival(plan, progress, time), color = Muted, fontSize = 11.sp)
+                if (isLandscape) {
+                    Text("$status · $altitude · ${(progress.fraction * 100).roundToInt()}% · $arrival",
+                        color = if (progress.phase == "ARRIVED") Mint else Cream,
+                        fontSize = 11.sp, lineHeight = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                } else {
+                    Text(status, color = if (progress.phase == "ARRIVED") Mint else Cream,
+                        fontSize = 12.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Text("$altitude · ${(progress.fraction * 100).roundToInt()}% · $arrival", color = Muted,
+                        fontSize = 11.sp, lineHeight = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
             }
             IconButton(onClick = onOrientation) {
                 Icon(Icons.Outlined.ScreenRotation, if (isLandscape) "Switch to portrait" else "Switch to landscape", tint = Mint)
