@@ -16,6 +16,9 @@ import androidx.compose.foundation.gestures.calculateRotation
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -164,14 +167,18 @@ fun IfeGlobeView(
     countries: List<CountryBoundary>,
     allCities: List<City>,
     cameraState: GlobeCameraState,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    flightTime: Instant = pack.plan.departure.plusMillis(
+        (Duration.between(pack.plan.departure, pack.plan.arrival).toMillis() * progress.fraction).toLong()
+    )
 ) {
     val context = LocalContext.current
     var viewportSize by remember { mutableStateOf(IntSize(1920, 1080)) }
+    var selectedAircraft by remember(pack.plan) { mutableStateOf<EstimatedAircraft?>(null) }
 
-    val flightTime: Instant = remember(progress.fraction, pack.plan) {
-        val totalMs = Duration.between(pack.plan.departure, pack.plan.arrival).toMillis()
-        pack.plan.departure.plusMillis((totalMs * progress.fraction).toLong())
+    val offlineContext = remember(pack.plan) { OfflineFlightContext.prepare(pack.plan) }
+    val nearbyAircraft = remember(offlineContext, flightTime, progress.point) {
+        OfflineFlightContext.nearby(offlineContext, flightTime, progress.point)
     }
 
     val subsolar = remember(flightTime.epochSecond / 60) {
@@ -331,7 +338,7 @@ fun IfeGlobeView(
     }
 
     val hasSelectedCard = cameraState.selectedFeature != null
-    val sceneLayout = remember(projection, pack.plan, progress.point, displayCities, countries, hasSelectedCard) {
+    val sceneLayout = remember(projection, pack.plan, progress.point, displayCities, countries, hasSelectedCard, nearbyAircraft) {
         val topSafe = if (projection.isPortrait) {
             (projection.height * 0.11f).coerceAtLeast(96f)
         } else {
@@ -353,7 +360,8 @@ fun IfeGlobeView(
             cities = displayCities,
             countries = countries,
             topSafePx = topSafe,
-            bottomSafePx = bottomSafe
+            bottomSafePx = bottomSafe,
+            aircraft = nearbyAircraft
         )
     }
 
@@ -448,12 +456,21 @@ fun IfeGlobeView(
                             val layout = currentSceneLayout
                             var bestFeature: SelectedGlobeFeature? = null
                             var bestDistPx = 56f
+                            selectedAircraft = null
 
                             for (plannedPin in layout.pins) {
                                 val d = hypot(plannedPin.x - lastPos.x, (plannedPin.y - 16f) - lastPos.y)
                                 if (d < bestDistPx) {
                                     bestDistPx = d
                                     bestFeature = SelectedGlobeFeature.PinFeature(plannedPin.pin)
+                                }
+                            }
+
+                            for (plannedAircraft in layout.aircraft) {
+                                val box = plannedAircraft.box
+                                if (lastPos.x in box.left..box.right && lastPos.y in box.top..box.bottom) {
+                                    bestDistPx = 0f
+                                    selectedAircraft = plannedAircraft.aircraft
                                 }
                             }
 
@@ -473,7 +490,7 @@ fun IfeGlobeView(
                                 }
                             }
 
-                            if (bestFeature == null) {
+                            if (bestFeature == null && selectedAircraft == null) {
                                 val searchRadiusKm = (260.0 / sqrt(proj.zoom)).coerceIn(60.0, 260.0)
                                 proj.unproject(lastPos.x, lastPos.y)?.let { (tapLat, tapLon, _) ->
                                     val tapGeo = GeoPoint(tapLat, tapLon)
@@ -526,6 +543,7 @@ fun IfeGlobeView(
                 drawPlannedPeaks(canvas, sceneLayout.peaks)
                 drawPlannedCities(canvas, sceneLayout.cities)
                 drawPlannedPins(canvas, sceneLayout.pins)
+                drawEstimatedAircraft(canvas, projection, sceneLayout.aircraft)
 
                 // 7. 3D swept-wing white aircraft icon at current position
                 drawAircraftIcon(canvas, projection, progress)
@@ -533,6 +551,51 @@ fun IfeGlobeView(
         }
         // Map attribution lives above the bottom dock in FlightScreen (always
         // legible, clear of the panel in portrait/landscape, expanded or not).
+    }
+    selectedAircraft?.let { aircraft ->
+        val schedule = aircraft.schedule
+        AlertDialog(
+            onDismissRequest = { selectedAircraft = null },
+            title = { Text("${schedule.number} · ${schedule.originCode} → ${schedule.destinationCode}") },
+            text = {
+                Text("${aircraft.evidenceLabel}\n\n${schedule.aircraftType}\n" +
+                    "Scheduled ${schedule.departure.atZone(java.time.ZoneId.of("Asia/Shanghai")).toLocalTime()}–" +
+                    "${schedule.arrival.atZone(java.time.ZoneId.of("Asia/Shanghai")).toLocalTime()} (UTC+8)\n\n" +
+                    "Airport-to-airport position estimated from scheduled block time, including taxi. " +
+                    "Actual route, operation and aircraft are unverified. This cannot identify a plane outside your window.\n\n" +
+                    "Source checked ${schedule.sourceCheckedOn}: ${schedule.sourceUrl}")
+            },
+            confirmButton = { TextButton(onClick = { selectedAircraft = null }) { Text("Close") } }
+        )
+    }
+}
+
+private fun drawEstimatedAircraft(canvas: Canvas, proj: GlobeProjection, aircraft: List<PlannedAircraft>) {
+    val ink = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.rgb(255, 197, 117)
+        style = Paint.Style.STROKE
+        strokeWidth = 2.3f
+        setShadowLayer(3f, 0f, 1f, android.graphics.Color.BLACK)
+    }
+    val label = Paint(ink).apply {
+        style = Paint.Style.FILL
+        textSize = 19f
+        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+    }
+    for (item in aircraft) {
+        canvas.save()
+        canvas.translate(item.x, item.y)
+        canvas.rotate(proj.screenHeadingDegrees(item.aircraft.point, item.aircraft.heading) + 90f)
+        // Hollow amber aircraft, distinct from the filled white own-plane icon.
+        val shape = Path().apply {
+            moveTo(0f, -14f); lineTo(3f, -3f); lineTo(13f, 5f)
+            lineTo(3f, 3f); lineTo(2f, 10f); lineTo(6f, 13f)
+            lineTo(0f, 11f); lineTo(-6f, 13f); lineTo(-2f, 10f)
+            lineTo(-3f, 3f); lineTo(-13f, 5f); lineTo(-3f, -3f); close()
+        }
+        canvas.drawPath(shape, ink)
+        canvas.restore()
+        canvas.drawText("${item.aircraft.schedule.number} · est.", item.x + 21f, item.y + 5f, label)
     }
 }
 

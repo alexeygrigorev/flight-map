@@ -11,6 +11,32 @@ package com.flightmap.core
 object IfeCatalog {
 
     val mountainPeaks: List<MountainPeak> = listOf(
+        // Coordinates checked 2026-10-20 against the linked summit records; elevations rounded
+        // to whole metres. These are ground features, not a terrain/visibility prediction.
+        MountainPeak("tianmen", "Tianmen Mountain", 4984, 1519,
+            GeoPoint(29.049905, 110.478835), "Wuling Mountains · Hunan, China",
+            "Limestone mountain south of Zhangjiajie, known for the natural Tianmen Cave arch. " +
+                "Elevation 1,518.6 m (rounded). Sources: Hunan Government; peakbagger.com/peak.aspx?pid=43770."),
+        // OSM node 5836003341; elevation: Hunan Department of Culture and Tourism,
+        // https://whhlyt.hunan.gov.cn/whhlyt/english/Tourism/Recommendations/202206/t20220610_25442896.html
+        MountainPeak("tianzi", "Tianzi Mountain", 4144, 1263,
+            GeoPoint(29.3941, 110.4948), "Wulingyuan · Wuling Mountains, China",
+            "Sandstone towers in the northern Wulingyuan scenic area. The scenic area's highest " +
+                "peak reaches 1,262.5 m. Sources: Hunan Culture and Tourism; OpenStreetMap node 5836003341."),
+        // OSM node 2239653006 (summit); UNESCO listing 547 identifies the massif,
+        // while Xinhua (2019-03-19, c_137906916) reports the summit elevation as 1,864 m.
+        MountainPeak("huangshan-lotus", "Huangshan · Lotus Peak", 6115, 1864,
+            GeoPoint(30.1271, 118.1652), "Anhui, China",
+            "Highest summit of Huangshan, a granite mountain landscape associated with Chinese " +
+                "painting and its distinctive pines. Sources: UNESCO whc.unesco.org/en/list/547/; " +
+                "Xinhua; OpenStreetMap node 2239653006."),
+        // Summit coordinate: https://www.peakwiki.org/en/peak.php?pid=486 ;
+        // elevation and mountain context: https://whc.unesco.org/en/list/778/
+        MountainPeak("lushan-hanyang", "Lushan · Hanyang Peak", 4836, 1474,
+            GeoPoint(29.50095, 115.95650), "Jiangxi, China",
+            "Highest peak of Lushan, between the Yangtze River and Poyang Lake. Its mountain " +
+                "landscape has inspired artists and scholars for centuries. Sources: UNESCO " +
+                "whc.unesco.org/en/list/778/; peakwiki.org/en/peak.php?pid=486."),
         MountainPeak(
             id = "narodnaya",
             name = "Mount Narodnaya",

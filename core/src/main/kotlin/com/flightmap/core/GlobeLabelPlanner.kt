@@ -42,6 +42,13 @@ data class PlannedCity(
     val box: LabelBox
 )
 
+data class PlannedAircraft(
+    val aircraft: EstimatedAircraft,
+    val x: Float,
+    val y: Float,
+    val box: LabelBox
+)
+
 data class PlannedCountry(
     val name: String,
     val x: Float,
@@ -55,7 +62,8 @@ data class GlobeSceneLayout(
     val peaks: List<PlannedPeak>,
     val cities: List<PlannedCity>,
     val countries: List<PlannedCountry>,
-    val occupiedBoxes: List<LabelBox>
+    val occupiedBoxes: List<LabelBox>,
+    val aircraft: List<PlannedAircraft> = emptyList()
 )
 
 /**
@@ -76,7 +84,7 @@ object GlobeLabelPlanner {
         "narodnaya",
         "mont-blanc",
         "ararat",
-        "k2"
+        "k2", "tianmen", "tianzi", "huangshan-lotus", "lushan-hanyang"
     )
 
     private val overviewPrimaryCities = setOf(
@@ -109,6 +117,7 @@ object GlobeLabelPlanner {
         countries: List<CountryBoundary>,
         topSafePx: Float = 72f,
         bottomSafePx: Float = 88f,
+        aircraft: List<EstimatedAircraft> = emptyList(),
         measureTextWidth: (text: String, textSizePx: Float) -> Float = { text, sizePx ->
             text.length * sizePx * 0.56f
         }
@@ -125,6 +134,7 @@ object GlobeLabelPlanner {
         val plannedPeaks = mutableListOf<PlannedPeak>()
         val plannedCities = mutableListOf<PlannedCity>()
         val plannedCountries = mutableListOf<PlannedCountry>()
+        val plannedAircraft = mutableListOf<PlannedAircraft>()
 
         // 1. Reserve space around the live aircraft icon so labels never sit under the wings
         val acProj = proj.project(progress.point)
@@ -153,6 +163,18 @@ object GlobeLabelPlanner {
                 occupied.add(box)
                 plannedEndpoints.add(PlannedEndpoint(code, p.x, p.y, box))
             }
+        }
+
+        // Reserve estimated aircraft before geography so neither text nor hit regions overlap.
+        for (item in aircraft.take(6)) {
+            val p = proj.project(item.point)
+            if (!p.visible || p.z < 0.16) continue
+            val width = measureTextWidth("${item.schedule.number} · est.", 19f)
+            val box = LabelBox(p.x - 16f, p.y - 17f, p.x + 23f + width, p.y + 22f)
+            if (box.left < leftLimit || box.right > rightLimit || box.top < topLimit || box.bottom > bottomLimit) continue
+            if (occupied.any { it.intersects(box) }) continue
+            occupied.add(box)
+            plannedAircraft.add(PlannedAircraft(item, p.x, p.y, box))
         }
 
         val isOverview = proj.zoom < 1.35
@@ -309,7 +331,8 @@ object GlobeLabelPlanner {
             peaks = plannedPeaks,
             cities = plannedCities,
             countries = plannedCountries,
-            occupiedBoxes = occupied
+            occupiedBoxes = occupied,
+            aircraft = plannedAircraft
         )
     }
 }
