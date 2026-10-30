@@ -306,13 +306,13 @@ class TrajectoryAndGlobeTest {
         assertEquals(Instant.parse("2026-10-25T11:00:00Z"), cz3085.arrival)
         assertFalse(cz3085.isRealTrajectory)
 
-        // 4. EY801 NRT -> AUH 2026-10-30 17:20 JST -> 2026-10-31 00:40 GST
+        // 4. EY801 NRT -> AUH 2026-10-30 17:35 JST -> 2026-10-31 00:50 GST
         val ey801 = TrajectoryCatalog.resolvePlan("EY801", "2026-10-30", airports)
         assertEquals("EY801", ey801.number)
         assertEquals("NRT", ey801.origin.iata)
         assertEquals("AUH", ey801.destination.iata)
-        assertEquals(Instant.parse("2026-10-30T08:20:00Z"), ey801.departure)
-        assertEquals(Instant.parse("2026-10-30T20:40:00Z"), ey801.arrival)
+        assertEquals(Instant.parse("2026-10-30T08:35:00Z"), ey801.departure)
+        assertEquals(Instant.parse("2026-10-30T20:50:00Z"), ey801.arrival)
         assertFalse(ey801.isRealTrajectory)
 
         // 5. DE2553 & EY1042 AUH -> BER 2026-10-31 02:20 GST -> 06:20 CET
